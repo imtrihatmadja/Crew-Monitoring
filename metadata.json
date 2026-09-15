@@ -1,0 +1,6 @@
+{
+  "name": "CREW SISTEM - ATLI",
+  "description": "Sistem Pemantauan Manifest Keluar-Masuk Pekerja Awak Kapal Perikanan Berbasis NIK - Asosiasi Tuna Longline Indonesia (UU PDP Compliant)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
