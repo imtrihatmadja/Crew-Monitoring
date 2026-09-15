@@ -314,14 +314,13 @@ ALTER TABLE IF EXISTS checkin_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_mobility_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS crew_duplication_alerts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_complaints DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS clearance_records DISABLE ROW LEVEL SECURITY;
 `;
 
 export const SQL_SCHEMA_TEXT = SUPABASE_SQL_SCHEMA;
 
 export const SQL_RLS_FIX = `-- ==============================================================================
 -- 1-KLIK PERBAIKAN IZIN AKSES SUPABASE (FIX RLS 42501)
--- Jalankan skrip ini di SQL Editor dashboard Supabase Anda:
+-- Salin dan jalankan seluruh baris di bawah ini di SQL Editor dashboard Supabase:
 -- https://supabase.com/dashboard/project/dzfozeuccisjfwmpbews/sql/new
 -- ==============================================================================
 
@@ -338,7 +337,6 @@ ALTER TABLE IF EXISTS checkin_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_mobility_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS crew_duplication_alerts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_complaints DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS clearance_records DISABLE ROW LEVEL SECURITY;
 `;
 
 export const SCHEMA_DIAGRAM = `
