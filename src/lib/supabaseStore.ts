@@ -1587,6 +1587,7 @@ export class DataStore {
 
     this.companies.push(newCompany);
     this.saveCompanies();
+    dbInsertCompany(newCompany).catch(err => console.log('Supabase sync company:', err));
 
     let createdVessel: Vessel | undefined;
 
@@ -1606,6 +1607,7 @@ export class DataStore {
       };
       this.vessels.push(createdVessel);
       this.saveVessels();
+      dbInsertVessel(createdVessel).catch(err => console.log('Supabase sync vessel:', err));
     }
 
     return { 
@@ -1651,6 +1653,7 @@ export class DataStore {
 
     this.vessels.push(newVessel);
     this.saveVessels();
+    dbInsertVessel(newVessel).catch(err => console.log('Supabase sync vessel:', err));
     return { success: true, vessel: newVessel };
   }
 

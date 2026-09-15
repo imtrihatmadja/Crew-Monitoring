@@ -3,13 +3,19 @@ import { Worker, Vessel, Company, Manifest, WorkerMobilityRecord, CrewDuplicatio
 
 const STORAGE_KEY_CONFIG = 'abk_system_supabase_config_v1';
 
+// Kredensial Resmi Supabase Cloud Project ATLI
+// Terpasang permanen secara otomatis agar sistem selalu terhubung di manapun dibuka
+export const BUILTIN_SUPABASE_URL = 'https://dzfozeuccisjfwmpbews.supabase.co';
+export const BUILTIN_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6Zm96ZXVjY2lzamZ3bXBiZXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0NDQwMDIsImV4cCI6MjEwNTAyMDAwMn0.RIaYnfn2kiHFA_A7uFnjxhDNM6J6sKudahKdFHW9uAo';
+
 export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
+  isBuiltin: boolean;
 }
 
-export function getSupabaseConfig(): SupabaseConfig | null {
-  // Check localStorage first
+export function getSupabaseConfig(): SupabaseConfig {
+  // 1. Cek penyimpanan lokal (opsional bila ada override)
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CONFIG);
     if (raw) {
@@ -17,7 +23,8 @@ export function getSupabaseConfig(): SupabaseConfig | null {
       if (parsed.supabaseUrl && parsed.supabaseKey) {
         return {
           supabaseUrl: parsed.supabaseUrl.trim(),
-          supabaseKey: parsed.supabaseKey.trim()
+          supabaseKey: parsed.supabaseKey.trim(),
+          isBuiltin: false
         };
       }
     }
@@ -25,41 +32,46 @@ export function getSupabaseConfig(): SupabaseConfig | null {
     console.error('Error reading Supabase config from localStorage:', e);
   }
 
-  // Fallback to Vite environment variables if available
+  // 2. Cek variabel lingkungan Vite bila ada
   const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
   const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
   if (envUrl && envKey && envUrl !== 'MY_SUPABASE_URL' && envUrl !== '') {
     return {
       supabaseUrl: envUrl.trim(),
-      supabaseKey: envKey.trim()
+      supabaseKey: envKey.trim(),
+      isBuiltin: false
     };
   }
 
-  return null;
+  // 3. Otomatis gunakan Kredensial Default Resmi Supabase (Selalu Terhubung)
+  return {
+    supabaseUrl: BUILTIN_SUPABASE_URL,
+    supabaseKey: BUILTIN_SUPABASE_ANON_KEY,
+    isBuiltin: true
+  };
 }
 
 let supabaseInstance: SupabaseClient | null = null;
 
-export function getSupabaseClient(): SupabaseClient | null {
+// Selalu mengembalikan instance Supabase Client yang aktif dan siap digunakan
+export function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) return supabaseInstance;
 
   const config = getSupabaseConfig();
-  if (config && config.supabaseUrl && config.supabaseKey) {
-    try {
-      supabaseInstance = createClient(config.supabaseUrl, config.supabaseKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true
-        }
-      });
-      return supabaseInstance;
-    } catch (err) {
-      console.error('Failed to initialize Supabase client:', err);
-      return null;
-    }
+  try {
+    supabaseInstance = createClient(config.supabaseUrl, config.supabaseKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true
+      }
+    });
+    return supabaseInstance;
+  } catch (err) {
+    console.error('Failed to initialize Supabase client:', err);
+    // Fallback instance
+    supabaseInstance = createClient(BUILTIN_SUPABASE_URL, BUILTIN_SUPABASE_ANON_KEY);
+    return supabaseInstance;
   }
-
-  return null;
 }
 
 export function saveSupabaseConfig(url: string, key: string): { success: boolean; error?: string } {
@@ -86,26 +98,56 @@ export function saveSupabaseConfig(url: string, key: string): { success: boolean
   }
 }
 
-export function clearSupabaseConfig(): void {
+export function resetToBuiltinConfig(): void {
   localStorage.removeItem(STORAGE_KEY_CONFIG);
-  supabaseInstance = null;
+  supabaseInstance = createClient(BUILTIN_SUPABASE_URL, BUILTIN_SUPABASE_ANON_KEY);
 }
 
-export async function testSupabaseConnection(): Promise<{ success: boolean; message: string; tablesCount?: number }> {
+export function clearSupabaseConfig(): void {
+  resetToBuiltinConfig();
+}
+
+export async function testSupabaseConnection(): Promise<{ 
+  success: boolean; 
+  message: string; 
+  latencyMs?: number;
+  isRlsBlocked?: boolean;
+}> {
   const client = getSupabaseClient();
-  if (!client) {
-    return { success: false, message: 'Kredensial Supabase belum dikonfigurasi.' };
-  }
+  const startTime = performance.now();
 
   try {
-    // Try to query companies table
     const { data, error } = await client.from('companies').select('id').limit(1);
+    const latencyMs = Math.round(performance.now() - startTime);
+
     if (error) {
-      return { success: false, message: `Error koneksi Supabase: ${error.message}` };
+      if (error.code === '42501' || error.message.toLowerCase().includes('row-level security')) {
+        return {
+          success: true,
+          isRlsBlocked: true,
+          latencyMs,
+          message: 'Server Supabase terhubung online. Memerlukan eksekusi 1-klik SQL izin RLS.'
+        };
+      }
+      return { 
+        success: false, 
+        message: `Error Supabase: ${error.message}`, 
+        latencyMs 
+      };
     }
-    return { success: true, message: 'Koneksi ke Supabase berhasil! Tabel siap digunakan.' };
+    return { 
+      success: true, 
+      isRlsBlocked: false, 
+      latencyMs, 
+      message: `Terhubung & Siap (${latencyMs}ms)` 
+    };
   } catch (e: any) {
-    return { success: false, message: e?.message || 'Gagal terhubung ke Supabase.' };
+    const latencyMs = Math.round(performance.now() - startTime);
+    return { 
+      success: false, 
+      message: e?.message || 'Gagal terhubung ke Cloud Supabase.', 
+      latencyMs 
+    };
   }
 }
 

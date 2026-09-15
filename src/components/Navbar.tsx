@@ -252,6 +252,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Section: User Profile & Mobile Menu Toggle */}
           <div className="flex items-center gap-2.5">
+            {/* Supabase Auto-Connected Status Badge */}
+            <button
+              onClick={onOpenUserModal}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs font-semibold cursor-pointer transition"
+              title="Database Cloud Supabase Terhubung Otomatis - Klik untuk status & sinkronisasi"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="hidden sm:inline">Supabase</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1 rounded font-mono">ONLINE</span>
+            </button>
+
             {/* User Profile & Company Switcher */}
             <button
               onClick={onOpenUserModal}

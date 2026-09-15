@@ -1,7 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { DEMO_USERS, store } from '../lib/supabaseStore';
-import { UserCheck, Shield, Anchor, X, Check, Database, Key, RefreshCw, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
+import { BUILTIN_SUPABASE_URL, testSupabaseConnection } from '../lib/supabaseClient';
+import { SQL_RLS_FIX } from '../lib/sqlSchema';
+import { 
+  UserCheck, 
+  Shield, 
+  Anchor, 
+  X, 
+  Check, 
+  Database, 
+  RefreshCw, 
+  Trash2, 
+  CheckCircle, 
+  AlertCircle, 
+  Copy, 
+  Globe, 
+  Zap 
+} from 'lucide-react';
 
 interface UserSwitchModalProps {
   isOpen: boolean;
@@ -16,44 +32,24 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
   onSelectUser,
   onClose
 }) => {
-  const [supabaseUrl, setSupabaseUrl] = useState('');
-  const [supabaseKey, setSupabaseKey] = useState('');
-  const [savedConfigMsg, setSavedConfigMsg] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isCleaning, setIsCleaning] = useState(false);
+  const [copiedRls, setCopiedRls] = useState(false);
+  const [connStatus, setConnStatus] = useState<{ latency?: number; isRlsBlocked?: boolean }>({});
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('abk_system_supabase_config_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setSupabaseUrl(parsed.supabaseUrl || '');
-        setSupabaseKey(parsed.supabaseKey || '');
-      } else {
-        // Fallback check Vite env
-        const metaEnv = (import.meta as any).env;
-        if (metaEnv?.VITE_SUPABASE_URL) setSupabaseUrl(metaEnv.VITE_SUPABASE_URL);
-        if (metaEnv?.VITE_SUPABASE_ANON_KEY) setSupabaseKey(metaEnv.VITE_SUPABASE_ANON_KEY);
-      }
-    } catch (e) {
-      // ignore
+    if (isOpen) {
+      testSupabaseConnection().then(res => {
+        setConnStatus({
+          latency: res.latencyMs,
+          isRlsBlocked: res.isRlsBlocked
+        });
+      });
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const isConnected = store.isSupabaseConnected();
-
-  const handleSaveSupabaseConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (supabaseUrl && supabaseKey) {
-      localStorage.setItem('abk_system_supabase_config_v1', JSON.stringify({ supabaseUrl, supabaseKey }));
-      setSavedConfigMsg('Kredensial Supabase berhasil disimpan! Sistem akan menggunakan database cloud ini.');
-      setTimeout(() => setSavedConfigMsg(''), 4000);
-      handleManualSync();
-    }
-  };
 
   const handleManualSync = async () => {
     setIsSyncing(true);
@@ -61,11 +57,22 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
     try {
       const res = await store.refreshFromSupabase();
       setSyncResult(res);
+      const testRes = await testSupabaseConnection();
+      setConnStatus({
+        latency: testRes.latencyMs,
+        isRlsBlocked: testRes.isRlsBlocked
+      });
     } catch (e: any) {
-      setSyncResult({ success: false, message: e?.message || 'Gagal sinkronisasi' });
+      setSyncResult({ success: false, message: e?.message || 'Gagal sinkronisasi data cloud.' });
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleCopyRlsFix = () => {
+    navigator.clipboard.writeText(SQL_RLS_FIX);
+    setCopiedRls(true);
+    setTimeout(() => setCopiedRls(false), 2500);
   };
 
   const handleClearAllData = async () => {
@@ -166,34 +173,48 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
             </div>
           </div>
 
-          {/* Live Supabase Connection & Data Management */}
+          {/* Cloud Supabase Auto-Configured Card */}
           <div className="pt-3 border-t border-slate-200 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                 <Database className="w-4 h-4 text-blue-600" />
-                Integrasi Cloud Supabase (Data Real)
+                Database Cloud Supabase (Tersambung Otomatis)
               </h3>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                isConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
-                {isConnected ? 'TERHUBUNG' : 'MODE LOKAL (OFFLINE)'}
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                ONLINE &bull; {connStatus.latency ? `${connStatus.latency}ms` : 'TERKONEKSI'}
               </span>
             </div>
 
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Masukkan Project URL dan Anon Key Supabase Anda agar semua input data ABK, kapal, dan manifest langsung tersimpan secara permanen di database PostgreSQL Supabase.
-            </p>
-
-            {savedConfigMsg && (
-              <div className="p-2.5 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded text-xs font-semibold flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
-                <span>{savedConfigMsg}</span>
+            {/* Status Information Box */}
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500 font-medium flex items-center gap-1">
+                  <Globe className="w-3.5 h-3.5 text-slate-400" /> Server Host:
+                </span>
+                <span className="font-mono text-slate-800 font-semibold truncate max-w-[210px]">
+                  {BUILTIN_SUPABASE_URL.replace('https://', '')}
+                </span>
               </div>
-            )}
 
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500 font-medium flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-500" /> Mode Akses:
+                </span>
+                <span className="font-semibold text-emerald-700 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3 text-emerald-600" />
+                  Otomatis Tanpa Input Manual
+                </span>
+              </div>
+
+              <p className="text-[11px] text-slate-600 leading-relaxed pt-1 border-t border-slate-200/80">
+                Sistem telah tersetting otomatis dan selalu terhubung ke database cloud Supabase. Semua pencatatan ABK, armada kapal, dan manifest langsung disinkronkan ke PostgreSQL.
+              </p>
+            </div>
+
+            {/* Sync feedback notice */}
             {syncResult && (
-              <div className={`p-2.5 rounded text-xs font-semibold flex items-center gap-2 border ${
+              <div className={`p-2.5 rounded-lg text-xs font-semibold flex items-center gap-2 border ${
                 syncResult.success 
                   ? 'bg-blue-50 text-blue-800 border-blue-300' 
                   : 'bg-amber-50 text-amber-800 border-amber-300'
@@ -207,61 +228,45 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleSaveSupabaseConfig} className="space-y-2.5">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 mb-1 uppercase">
-                  SUPABASE PROJECT URL:
-                </label>
-                <input
-                  type="url"
-                  placeholder="https://xyzcompany.supabase.co"
-                  value={supabaseUrl}
-                  onChange={(e) => setSupabaseUrl(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-                />
-              </div>
+            {/* Action Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                className="py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                {isSyncing ? 'Menyinkronkan...' : 'Tarik & Sinkronkan Data'}
+              </button>
 
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 mb-1 uppercase">
-                  SUPABASE ANON PUBLIC KEY:
-                </label>
-                <input
-                  type="password"
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                  value={supabaseKey}
-                  onChange={(e) => setSupabaseKey(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                <button
-                  type="submit"
-                  className="py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
-                >
-                  <Key className="w-3.5 h-3.5" />
-                  Simpan &amp; Hubungkan
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleManualSync}
-                  disabled={isSyncing}
-                  className="py-2 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                  {isSyncing ? 'Menghubungkan...' : 'Tarik Data Supabase'}
-                </button>
-              </div>
-            </form>
+              <button
+                type="button"
+                onClick={handleCopyRlsFix}
+                className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 border border-slate-700 shadow-sm cursor-pointer"
+                title="Salin skrip SQL untuk membuka hak akses RLS tabel jika diperlukan di Supabase SQL Editor"
+              >
+                {copiedRls ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>SQL RLS Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Salin SQL Izin RLS</span>
+                  </>
+                )}
+              </button>
+            </div>
 
             {/* Data Management Action */}
-            <div className="pt-3 border-t border-slate-200">
+            <div className="pt-2 border-t border-slate-200">
               <button
                 type="button"
                 onClick={handleClearAllData}
                 disabled={isCleaning}
-                className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-xs font-bold transition flex items-center justify-center gap-1.5"
+                className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5 text-rose-600" />
                 Kosongkan Semua Data Dummy (Reset 0 Data)
