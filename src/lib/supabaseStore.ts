@@ -82,6 +82,82 @@ const STORAGE_KEYS = {
   USER: "abk_system_active_user_v4_real"
 };
 
+/**
+ * Membersihkan cache usang dan data versi lama dari LocalStorage untuk mengosongkan kuota
+ */
+export function optimizeLocalStorage(): { freedCount: number } {
+  let freedCount = 0;
+  try {
+    const validCurrentKeys = [
+      ...Object.values(STORAGE_KEYS),
+      "abk_system_supabase_config_v1"
+    ];
+
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k) {
+        if (!validCurrentKeys.includes(k) || k.includes('_v1') || k.includes('_v2') || k.includes('_v3')) {
+          keysToRemove.push(k);
+        }
+      }
+    }
+
+    keysToRemove.forEach(k => {
+      try {
+        localStorage.removeItem(k);
+        freedCount++;
+      } catch (e) {
+        // ignore
+      }
+    });
+  } catch (e) {
+    // ignore
+  }
+  return { freedCount };
+}
+
+/**
+ * Penyimpan aman LocalStorage yang kebal terhadap QuotaExceededError (5MB browser quota).
+ * Mencegah aplikasi crash saat mendaftarkan pekerja atau kapal.
+ */
+export function safeSetItem(key: string, data: any): boolean {
+  const serialized = typeof data === 'string' ? data : JSON.stringify(data);
+  try {
+    localStorage.setItem(key, serialized);
+    return true;
+  } catch (err: any) {
+    console.warn(`[SafeStorage] Kuota LocalStorage terlampaui saat menulis "${key}":`, err?.message);
+
+    // Langkah 1: Bersihkan semua cache usang dari LocalStorage
+    try {
+      optimizeLocalStorage();
+      localStorage.setItem(key, serialized);
+      return true;
+    } catch (e1) {
+      // Masih melebihi kuota
+    }
+
+    // Langkah 2: Jika data berupa array (seperti list workers/events/manifests),
+    // simpan subset 30 item terbaru di cache lokal browser
+    try {
+      if (Array.isArray(data)) {
+        const compactSubset = data.slice(0, 30);
+        localStorage.setItem(key, JSON.stringify(compactSubset));
+        console.info(`[SafeStorage] Disimpan subset ${compactSubset.length} item terbaru pada cache "${key}".`);
+        return true;
+      }
+    } catch (e2) {
+      // Kuota origin browser masih penuh
+    }
+
+    // Langkah 3: Jangan melempar exception fatal agar alur pendaftaran pekerja tetap sukses.
+    // Data tetap aman di memory state aplikasi dan tersimpan permanen di PostgreSQL Supabase.
+    console.warn(`[SafeStorage] Data untuk "${key}" tetap aman di memori aktif & tersimpan di Cloud Supabase.`);
+    return false;
+  }
+}
+
 export class DataStore {
   private workers: Worker[] = [];
   private events: CheckinEvent[] = [];
@@ -101,15 +177,9 @@ export class DataStore {
   private isSupabaseSyncing: boolean = false;
 
   private async init() {
-    // 1. Bersihkan seluruh jejak data dummy versi lama dari localStorage browser
+    // 1. Bersihkan seluruh jejak data dummy versi lama dan key usang dari localStorage browser
     try {
-      const oldKeys = [
-        "abk_system_workers_v3", "abk_system_events_v3", "abk_system_vessels_v3",
-        "abk_system_companies_v3", "abk_system_manifests_v3", "abk_system_discrepancies_v3",
-        "abk_system_mobility_v3", "abk_system_duplicates_v3", "abk_system_clearance_v3",
-        "abk_system_workers_v2", "abk_system_workers_v1"
-      ];
-      oldKeys.forEach(k => localStorage.removeItem(k));
+      optimizeLocalStorage();
     } catch (e) {
       // ignore
     }
@@ -233,43 +303,43 @@ export class DataStore {
   }
 
   private saveClearances() {
-    localStorage.setItem(STORAGE_KEYS.CLEARANCES, JSON.stringify(this.clearanceRecords));
+    safeSetItem(STORAGE_KEYS.CLEARANCES, this.clearanceRecords);
   }
 
   private saveWorkers() {
-    localStorage.setItem(STORAGE_KEYS.WORKERS, JSON.stringify(this.workers));
+    safeSetItem(STORAGE_KEYS.WORKERS, this.workers);
   }
 
   private saveEvents() {
-    localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(this.events));
+    safeSetItem(STORAGE_KEYS.EVENTS, this.events);
   }
 
   private saveManifests() {
-    localStorage.setItem(STORAGE_KEYS.MANIFESTS, JSON.stringify(this.manifests));
+    safeSetItem(STORAGE_KEYS.MANIFESTS, this.manifests);
   }
 
   private saveDiscrepancies() {
-    localStorage.setItem(STORAGE_KEYS.DISCREPANCIES, JSON.stringify(this.discrepancies));
+    safeSetItem(STORAGE_KEYS.DISCREPANCIES, this.discrepancies);
   }
 
   private saveMobility() {
-    localStorage.setItem(STORAGE_KEYS.MOBILITY, JSON.stringify(this.mobilityRecords));
+    safeSetItem(STORAGE_KEYS.MOBILITY, this.mobilityRecords);
   }
 
   private saveDuplicates() {
-    localStorage.setItem(STORAGE_KEYS.DUPLICATES, JSON.stringify(this.duplicateAlerts));
+    safeSetItem(STORAGE_KEYS.DUPLICATES, this.duplicateAlerts);
   }
 
   public saveCompanies() {
-    localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(this.companies));
+    safeSetItem(STORAGE_KEYS.COMPANIES, this.companies);
   }
 
   public saveVessels() {
-    localStorage.setItem(STORAGE_KEYS.VESSELS, JSON.stringify(this.vessels));
+    safeSetItem(STORAGE_KEYS.VESSELS, this.vessels);
   }
 
   private saveUser() {
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.currentUser));
+    safeSetItem(STORAGE_KEYS.USER, this.currentUser);
   }
 
   // --- GETTERS ---

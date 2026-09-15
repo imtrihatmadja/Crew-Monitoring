@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile } from '../types';
-import { DEMO_USERS, store } from '../lib/supabaseStore';
+import { DEMO_USERS, store, optimizeLocalStorage } from '../lib/supabaseStore';
 import { BUILTIN_SUPABASE_URL, testSupabaseConnection } from '../lib/supabaseClient';
 import { SQL_RLS_FIX } from '../lib/sqlSchema';
 import { 
@@ -16,7 +16,8 @@ import {
   AlertCircle, 
   Copy, 
   Globe, 
-  Zap 
+  Zap,
+  HardDrive
 } from 'lucide-react';
 
 interface UserSwitchModalProps {
@@ -37,6 +38,7 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
   const [isCleaning, setIsCleaning] = useState(false);
   const [copiedRls, setCopiedRls] = useState(false);
   const [connStatus, setConnStatus] = useState<{ latency?: number; isRlsBlocked?: boolean }>({});
+  const [optimizeMsg, setOptimizeMsg] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -73,6 +75,12 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
     navigator.clipboard.writeText(SQL_RLS_FIX);
     setCopiedRls(true);
     setTimeout(() => setCopiedRls(false), 2500);
+  };
+
+  const handleOptimizeStorage = () => {
+    const res = optimizeLocalStorage();
+    setOptimizeMsg(`Pembersihan selesai! ${res.freedCount} data cache usang dibersihkan. Kuota memori browser Anda sekarang lega.`);
+    setTimeout(() => setOptimizeMsg(''), 4000);
   };
 
   const handleClearAllData = async () => {
@@ -228,6 +236,13 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
               </div>
             )}
 
+            {optimizeMsg && (
+              <div className="p-2.5 rounded-lg text-xs font-semibold flex items-center gap-2 border bg-emerald-50 text-emerald-800 border-emerald-300">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{optimizeMsg}</span>
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
               <button
@@ -260,8 +275,18 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
               </button>
             </div>
 
-            {/* Data Management Action */}
-            <div className="pt-2 border-t border-slate-200">
+            {/* Storage Optimization and Data Management Actions */}
+            <div className="pt-2 border-t border-slate-200 space-y-2">
+              <button
+                type="button"
+                onClick={handleOptimizeStorage}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                title="Membersihkan data usang dan merelakan kuota LocalStorage browser"
+              >
+                <HardDrive className="w-3.5 h-3.5 text-blue-600" />
+                Bersihkan &amp; Optimalkan Kuota Memori Browser
+              </button>
+
               <button
                 type="button"
                 onClick={handleClearAllData}
