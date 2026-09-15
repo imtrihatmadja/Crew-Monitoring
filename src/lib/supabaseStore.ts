@@ -14,42 +14,39 @@ import {
   ClearanceRecord
 } from '../types';
 import { hashNik } from './hash';
+import {
+  getSupabaseClient,
+  dbInsertCompany,
+  dbInsertVessel,
+  dbInsertWorker,
+  dbInsertManifest,
+  dbInsertMobility,
+  dbInsertDuplicateAlert,
+  fetchAllFromSupabase
+} from './supabaseClient';
 
-// Default Demo Accounts for Association Member Companies & Admin
+// Akun Pengujian Akses (Role-Based Access Control)
 export const DEMO_USERS: UserProfile[] = [
   {
-    id: 'u-comp-1',
-    email: 'ops@samuderabahari.co.id',
-    name: 'Hendra Gunawan (PT Samudera Bahari)',
-    role: 'company',
-    port: 'PPS Nizam Zachman Jakarta',
-    company_id: 'c-1',
-    company_name: 'PT Samudera Bahari Indonesia'
-  },
-  {
-    id: 'u-comp-2',
-    email: 'crew@minajayalautan.com',
-    name: 'Dewi Kusuma (PT Mina Jaya Lautan)',
-    role: 'company',
-    port: 'PPS Bitung',
-    company_id: 'c-2',
-    company_name: 'PT Mina Jaya Lautan'
-  },
-  {
-    id: 'u-captain-1',
-    email: 'capt.bambang@sinarnusantara.com',
-    name: 'Capt. Bambang (Nahkoda KM Bahari Utama VII)',
-    role: 'company',
-    port: 'PPS Benoa',
-    company_id: 'c-3',
-    company_name: 'CV Sinar Nusantara Maritime'
-  },
-  {
     id: 'u-admin-1',
-    email: 'sekretariat@asokapal.id',
-    name: 'Ir. Ahmad Wijaya (Admin Sekretariat Asosiasi)',
+    email: 'admin@asosiasi-kapal.id',
+    name: 'Admin Sekretariat Asosiasi',
     role: 'admin',
     port: 'Kantor Pusat Asosiasi'
+  },
+  {
+    id: 'u-syahbandar-1',
+    email: 'syahbandar@pelabuhan.go.id',
+    name: 'Petugas Syahbandar Pelabuhan',
+    role: 'syahbandar',
+    port: 'PPS Nizam Zachman Jakarta'
+  },
+  {
+    id: 'u-comp-1',
+    email: 'ops@perusahaan-kapal.com',
+    name: 'Staf Personalia Perusahaan Anggota',
+    role: 'company',
+    port: 'PPS Nizam Zachman Jakarta'
   }
 ];
 
@@ -64,525 +61,25 @@ export const INDONESIAN_PORTS = [
   'PPP Mayangan Probolinggo'
 ];
 
-// Initial Seed Data: Member Companies in the Association
-const INITIAL_COMPANIES: Company[] = [
-  { 
-    id: 'c-1', 
-    name: 'PT Samudera Bahari Indonesia', 
-    code: 'SBI',
-    license_number: 'SIUP-KKP-2023-0891', 
-    pic_name: 'Hendra Gunawan',
-    pic_role: 'Manajer Personalia & Armada',
-    pic_phone: '0812-3344-5566',
-    pic_email: 'ops@samuderabahari.co.id',
-    address: 'Dermaga Barat No. 12, Pelabuhan Muara Baru, Jakarta Utara',
-    created_at: '2023-01-15T08:00:00Z' 
-  },
-  { 
-    id: 'c-2', 
-    name: 'PT Mina Jaya Lautan', 
-    code: 'MJL',
-    license_number: 'SIUP-KKP-2022-0412', 
-    pic_name: 'Dewi Kusuma',
-    pic_role: 'Kepala Bagian Crewing & Operasional',
-    pic_phone: '0813-8899-0011',
-    pic_email: 'crewing@minajayalautan.com',
-    address: 'Kompleks PPS Bitung Blok C-4, Sulawesi Utara',
-    created_at: '2022-05-10T08:00:00Z' 
-  },
-  { 
-    id: 'c-3', 
-    name: 'CV Sinar Nusantara Maritime', 
-    code: 'SNM',
-    license_number: 'SIUP-KKP-2024-0105', 
-    pic_name: 'Bambang Sutrisno',
-    pic_role: 'Koordinator Kapal & Syahbandar Internal',
-    pic_phone: '0811-2233-4455',
-    pic_email: 'ops@sinarnusantara.com',
-    address: 'Jl. Ikan Tuna II No. 8, Pelabuhan Benoa, Bali',
-    created_at: '2024-02-01T08:00:00Z' 
-  },
-  { 
-    id: 'c-4', 
-    name: 'PT Bahtera Nelayan Sentosa', 
-    code: 'BNS',
-    license_number: 'SIUP-KKP-2024-0332', 
-    pic_name: 'Capt. Rusli Effendi',
-    pic_role: 'Direktur Operasional Armada',
-    pic_phone: '0852-6677-8899',
-    pic_email: 'rusli@bahteranelayan.co.id',
-    address: 'Jl. Samudera Raya Kav. 5, Pelabuhan Kejawanan, Cirebon',
-    created_at: '2024-04-12T08:00:00Z' 
-  }
-];
-
-const INITIAL_VESSELS: Vessel[] = [
-  { id: 'v-1', name: 'KM Sinar Laut 01', registration_number: 'SIPI.321/KKP/2023', gross_tonnage: 45, company_id: 'c-1', company_name: 'PT Samudera Bahari Indonesia', home_port: 'PPS Nizam Zachman Jakarta', captain_name: 'Capt. Herman', status: 'di_laut', active_crew_count: 2 },
-  { id: 'v-2', name: 'KM Mina Jaya 88', registration_number: 'SIPI.882/KKP/2022', gross_tonnage: 120, company_id: 'c-2', company_name: 'PT Mina Jaya Lautan', home_port: 'PPS Bitung', captain_name: 'Capt. Antonius', status: 'di_laut', active_crew_count: 1 },
-  { id: 'v-3', name: 'KM Bahari Utama VII', registration_number: 'SIPI.109/KKP/2024', gross_tonnage: 60, company_id: 'c-3', company_name: 'CV Sinar Nusantara Maritime', home_port: 'PPS Benoa', captain_name: 'Capt. Bambang', status: 'sandar', active_crew_count: 2 },
-  { id: 'v-4', name: 'KM Samudera Perkasa', registration_number: 'SIPI.704/KKP/2023', gross_tonnage: 85, company_id: 'c-1', company_name: 'PT Samudera Bahari Indonesia', home_port: 'PPS Nizam Zachman Jakarta', captain_name: 'Capt. Suryadi', status: 'sandar', active_crew_count: 2 },
-  { id: 'v-5', name: 'KM Mina Perkasa 09', registration_number: 'SIPI.441/KKP/2024', gross_tonnage: 98, company_id: 'c-2', company_name: 'PT Mina Jaya Lautan', home_port: 'PPS Bitung', captain_name: 'Capt. Yohanes', status: 'sandar', active_crew_count: 0 },
-  { id: 'v-6', name: 'KM Bahtera Inti 03', registration_number: 'SIPI.552/KKP/2024', gross_tonnage: 72, company_id: 'c-4', company_name: 'PT Bahtera Nelayan Sentosa', home_port: 'PPN Kejawanan Cirebon', captain_name: 'Capt. Sugeng', status: 'sandar', active_crew_count: 0 }
-];
-
-const INITIAL_WORKERS_SEED = [
-  {
-    id: 'w-1',
-    name: 'Sukarman Setiawan',
-    nikRaw: '3271011508850001',
-    dob: '1985-08-15',
-    phone: '081234567890',
-    home_port: 'PPS Nizam Zachman Jakarta',
-    status: 'di_darat' as const,
-    vessel_id: 'v-3',
-    vessel_name: 'KM Bahari Utama VII',
-    position: 'Nahkoda',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Rekam jejak sangat baik. Memiliki sertifikat keahlian lengkap.',
-    pkl_number: 'PKL/2025/001',
-    pkl_start_date: '2025-01-10',
-    pkl_expiry_date: '2026-01-10',
-    pkl_company_name: 'PT Samudera Bahari Indonesia',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-6201-9872',
-    bst_expiry: '2028-08-15',
-    seaman_book_number: 'B-883921',
-    seaman_book_expiry: '2027-12-31',
-    passport_number: 'C-9812039',
-    passport_expiry: '2029-05-20',
-    competency_cert: 'ANKAPIN I (Ahli Nautika Kapal Penangkap Ikan)',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3271009822100',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0001928374821',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-2',
-    name: 'Bambang Supriyanto',
-    nikRaw: '3318021204910003',
-    dob: '1991-04-12',
-    phone: '081398765432',
-    home_port: 'PPS Bitung',
-    status: 'di_laut' as const,
-    vessel_id: 'v-2',
-    vessel_name: 'KM Mina Jaya 88',
-    position: 'Kepala Kamar Mesin (KKM)',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Spesialis teknisi mesin diesel kapal >100 GT.',
-    pkl_number: 'PKL/2025/012',
-    pkl_start_date: '2025-02-01',
-    pkl_expiry_date: '2026-02-01',
-    pkl_company_name: 'PT Mina Jaya Bahari',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-8812-4410',
-    bst_expiry: '2027-04-12',
-    seaman_book_number: 'B-771239',
-    seaman_book_expiry: '2026-11-15',
-    passport_number: 'C-1029381',
-    passport_expiry: '2028-09-10',
-    competency_cert: 'ATKAPIN I (Ahli Teknika Kapal Penangkap Ikan)',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3318902192110',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0002819382019',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-3',
-    name: 'Herman Prasetyo',
-    nikRaw: '3578032009880004',
-    dob: '1988-09-20',
-    phone: '085711223344',
-    home_port: 'PPS Nizam Zachman Jakarta',
-    status: 'di_darat' as const,
-    vessel_id: 'v-3',
-    vessel_name: 'KM Bahari Utama VII',
-    position: 'Kelasi / ABK Utama',
-    performance_rating: 'kuning' as const,
-    performance_notes: 'Perlu peninjauan perpanjangan dokumen PKL yang akan kadaluarsa.',
-    pkl_number: 'PKL/2024/099',
-    pkl_start_date: '2024-01-15',
-    pkl_expiry_date: '2025-01-15',
-    pkl_company_name: 'CV Sinar Nusantara Maritime',
-    pkl_status: 'kadaluarsa' as const,
-    bst_number: 'BST-1102-9921',
-    bst_expiry: '2025-10-20',
-    seaman_book_number: 'B-551029',
-    seaman_book_expiry: '2025-08-01',
-    competency_cert: 'SKK 60 Mil Laut',
-    mcu_status: 'perlu_evaluasi' as const,
-    bpjs_tk_number: '3578901238910',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0003912091120',
-    bpjs_kes_active: false
-  },
-  {
-    id: 'w-4',
-    name: 'Dedi Kurniawan',
-    nikRaw: '3175040101950002',
-    dob: '1995-01-01',
-    phone: '082155667788',
-    home_port: 'PPS Benoa',
-    status: 'di_laut' as const,
-    vessel_id: 'v-1',
-    vessel_name: 'KM Sinar Laut 01',
-    position: 'Juru Mudi',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Kedisiplinan pelayaran sangat tinggi.',
-    pkl_number: 'PKL/2025/044',
-    pkl_start_date: '2025-03-01',
-    pkl_expiry_date: '2026-03-01',
-    pkl_company_name: 'PT Samudera Bahari Indonesia',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-3391-0021',
-    bst_expiry: '2028-01-01',
-    seaman_book_number: 'B-901128',
-    seaman_book_expiry: '2027-05-15',
-    competency_cert: 'ANKAPIN II',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3175109283019',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0004812901920',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-5',
-    name: 'Asep Saepullah',
-    nikRaw: '3204051011900005',
-    dob: '1990-11-10',
-    phone: '087899001122',
-    home_port: 'PPN Kejawanan Cirebon',
-    status: 'di_darat' as const,
-    vessel_id: 'v-4',
-    vessel_name: 'KM Samudera Perkasa',
-    position: 'Masinis II',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Sertifikasi teknis lengkap & aktif.',
-    pkl_number: 'PKL/2025/055',
-    pkl_start_date: '2025-01-20',
-    pkl_expiry_date: '2026-01-20',
-    pkl_company_name: 'PT Samudera Bahari Indonesia',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-9901-2210',
-    bst_expiry: '2027-11-10',
-    seaman_book_number: 'B-662109',
-    seaman_book_expiry: '2027-08-20',
-    competency_cert: 'ATKAPIN II',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3204901283012',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0005819028110',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-6',
-    name: 'Rahmat Hidayat',
-    nikRaw: '3204051011900006',
-    dob: '1992-03-25',
-    phone: '081299887766',
-    home_port: 'PPS Nizam Zachman Jakarta',
-    status: 'di_laut' as const,
-    vessel_id: 'v-1',
-    vessel_name: 'KM Sinar Laut 01',
-    position: 'Koki Kapal',
-    performance_rating: 'merah' as const,
-    performance_notes: 'Pernah tercatat tidak hadir pada keberangkatan manifest tanpa konfirmasi.',
-    pkl_number: 'PKL/2024/011',
-    pkl_start_date: '2024-02-10',
-    pkl_expiry_date: '2025-02-10',
-    pkl_company_name: 'PT Samudera Bahari Indonesia',
-    pkl_status: 'kadaluarsa' as const,
-    bst_number: 'BST-2201-8812',
-    bst_expiry: '2025-03-25',
-    seaman_book_number: 'B-112908',
-    seaman_book_expiry: '2025-06-01',
-    mcu_status: 'perlu_evaluasi' as const,
-    bpjs_tk_number: '3204901289019',
-    bpjs_tk_active: false,
-    bpjs_kes_number: '0006819208310',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-7',
-    name: 'Joko Widodo',
-    nikRaw: '3204051011900007',
-    dob: '1989-07-14',
-    phone: '081377665544',
-    home_port: 'PPS Bitung',
-    status: 'di_darat' as const,
-    vessel_id: 'v-4',
-    vessel_name: 'KM Samudera Perkasa',
-    position: 'ABK Keliling',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Tidak pernah memiliki catatan pelanggaran.',
-    pkl_number: 'PKL/2025/102',
-    pkl_start_date: '2025-04-01',
-    pkl_expiry_date: '2026-04-01',
-    pkl_company_name: 'PT Samudera Bahari Indonesia',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-5512-8821',
-    bst_expiry: '2028-07-14',
-    seaman_book_number: 'B-449102',
-    seaman_book_expiry: '2027-10-10',
-    competency_cert: 'SKK 30 Mil Laut',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3204910283019',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0007819208120',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-8',
-    name: 'Anton Wijaya',
-    nikRaw: '3204051011900008',
-    dob: '1993-05-18',
-    phone: '081288776655',
-    home_port: 'PPS Nizam Zachman Jakarta',
-    status: 'di_darat' as const,
-    vessel_id: 'v-2',
-    vessel_name: 'KM Mina Jaya 88',
-    position: 'Kelasi / Juru Motor',
-    performance_rating: 'merah' as const,
-    performance_notes: 'Catatan pelanggaran indisipliner: meninggalkan kapal saat bersandar di pelabuhan tanpa izin nahkoda dan belum ada surat pelepasan resmi.',
-    pkl_number: 'PKL/2024/078',
-    pkl_start_date: '2024-03-01',
-    pkl_expiry_date: '2025-03-01',
-    pkl_company_name: 'PT Mina Jaya Lautan',
-    pkl_status: 'kadaluarsa' as const,
-    bst_number: 'BST-7721-0091',
-    bst_expiry: '2026-08-10',
-    seaman_book_number: 'B-338219',
-    seaman_book_expiry: '2026-05-12',
-    competency_cert: 'SKK 60 Mil Laut',
-    mcu_status: 'perlu_evaluasi' as const,
-    bpjs_tk_number: '3204918291021',
-    bpjs_tk_active: false,
-    bpjs_kes_number: '0008819208220',
-    bpjs_kes_active: true
-  },
-  {
-    id: 'w-9',
-    name: 'Suratman Hadi',
-    nikRaw: '3318021204910009',
-    dob: '1987-12-04',
-    phone: '081322334455',
-    home_port: 'PPS Bitung',
-    status: 'di_darat' as const,
-    vessel_id: 'v-3',
-    vessel_name: 'KM Bahari Utama VII',
-    position: 'Juru Rawat Jaring',
-    performance_rating: 'kuning' as const,
-    performance_notes: 'Hasil MCU menyatakan perlu evaluasi lanjutan (hipertensi ringan) dan masa berlaku kontrak PKL berakhir dalam 14 hari.',
-    pkl_number: 'PKL/2024/115',
-    pkl_start_date: '2024-04-15',
-    pkl_expiry_date: '2025-04-15',
-    pkl_company_name: 'CV Sinar Nusantara Maritime',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-4412-9901',
-    bst_expiry: '2025-11-20',
-    seaman_book_number: 'B-229103',
-    seaman_book_expiry: '2025-09-18',
-    competency_cert: 'BST Perikanan',
-    mcu_status: 'perlu_evaluasi' as const,
-    bpjs_tk_number: '3318928192019',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0009819208330',
-    bpjs_kes_active: true,
-    clearance_status: 'ada_tanggungan' as const,
-    tanggungan_category: 'kasbon_pinjaman' as const,
-    tanggungan_amount: 1500000,
-    tanggungan_notes: 'Sisa kasbon perbekalan dan pinjaman darurat pelayaran lalu belum diselesaikan dengan kasir kapal.',
-    clearance_by_vessel: 'KM Bahari Utama VII'
-  },
-  {
-    id: 'w-10',
-    name: 'Agus Setiawan',
-    nikRaw: '3271011508930010',
-    dob: '1993-08-15',
-    phone: '081234556677',
-    home_port: 'PPS Nizam Zachman Jakarta',
-    status: 'di_darat' as const,
-    vessel_id: undefined,
-    vessel_name: undefined,
-    position: 'ABK Bebas Tugas / Pool Darat',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Dokumen lengkap dan valid. Siap ditugaskan untuk pelayaran armada baru.',
-    pkl_number: 'PKL/2025/119',
-    pkl_start_date: '2025-01-01',
-    pkl_expiry_date: '2026-01-01',
-    pkl_company_name: 'PT Samudera Bahari Indonesia',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-6601-9011',
-    bst_expiry: '2028-04-10',
-    seaman_book_number: 'B-998811',
-    seaman_book_expiry: '2027-10-15',
-    competency_cert: 'SKK 60 Mil Laut',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3271901192010',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0001819208440',
-    bpjs_kes_active: true,
-    clearance_status: 'bebas_tanggungan' as const,
-    tanggungan_notes: 'Peralatan kapal lengkap, bagi hasil diselesaikan penuh. Bebas transfer ke kapal manapun.'
-  },
-  {
-    id: 'w-11',
-    name: 'Wahyu Hidayat',
-    nikRaw: '3318021204950011',
-    dob: '1995-02-12',
-    phone: '081398877665',
-    home_port: 'PPS Bitung',
-    status: 'di_darat' as const,
-    vessel_id: undefined,
-    vessel_name: undefined,
-    position: 'Juru Motor / Masinis Cadangan',
-    performance_rating: 'hijau' as const,
-    performance_notes: 'Sertifikasi teknis mesin perikanan aktif, siap diberangkatkan.',
-    pkl_number: 'PKL/2025/122',
-    pkl_start_date: '2025-02-15',
-    pkl_expiry_date: '2026-02-15',
-    pkl_company_name: 'PT Mina Jaya Lautan',
-    pkl_status: 'aktif' as const,
-    bst_number: 'BST-7702-3312',
-    bst_expiry: '2028-09-20',
-    seaman_book_number: 'B-882233',
-    seaman_book_expiry: '2027-06-30',
-    competency_cert: 'ATKAPIN II',
-    mcu_status: 'layak' as const,
-    bpjs_tk_number: '3318902193011',
-    bpjs_tk_active: true,
-    bpjs_kes_number: '0002819385550',
-    bpjs_kes_active: true,
-    clearance_status: 'bebas_tanggungan' as const,
-    tanggungan_notes: 'Bebas tanggungan. Siap penugasan baru.'
-  }
-];
-
-const INITIAL_MOBILITY_SEED: WorkerMobilityRecord[] = [
-  {
-    id: 'mob-1',
-    worker_id: 'w-1',
-    worker_name: 'Sukarman Setiawan',
-    worker_nik_last4: '0001',
-    from_vessel_id: 'v-2',
-    from_vessel_name: 'KM Mina Jaya 88',
-    from_company_id: 'c-2',
-    from_company_name: 'PT Mina Jaya Lautan',
-    to_vessel_id: 'v-3',
-    to_vessel_name: 'KM Bahari Utama VII',
-    to_company_id: 'c-3',
-    to_company_name: 'CV Sinar Nusantara Maritime',
-    transfer_date: '2025-01-10T10:00:00Z',
-    reason: 'selesai_kontrak',
-    notes: 'Selesai masa kontrak 12 bulan di PT Mina Jaya Lautan dengan surat rekomendasi baik. Bergabung ke CV Sinar Nusantara.',
-    clearance_status: 'disetujui',
-    recorded_by_name: 'Hendra Gunawan'
-  },
-  {
-    id: 'mob-2',
-    worker_id: 'w-4',
-    worker_name: 'Dedi Kurniawan',
-    worker_nik_last4: '0002',
-    from_vessel_id: 'v-6',
-    from_vessel_name: 'KM Bahtera Inti 03',
-    from_company_id: 'c-4',
-    from_company_name: 'PT Bahtera Nelayan Sentosa',
-    to_vessel_id: 'v-1',
-    to_vessel_name: 'KM Sinar Laut 01',
-    to_company_id: 'c-1',
-    to_company_name: 'PT Samudera Bahari Indonesia',
-    transfer_date: '2025-03-01T08:30:00Z',
-    reason: 'mutasi_armada',
-    notes: 'Peminjaman kru antar anggota grup asosiasi untuk trip penangkapan cumi WPPNRI 711.',
-    clearance_status: 'disetujui',
-    recorded_by_name: 'Capt. Rusli Effendi'
-  },
-  {
-    id: 'mob-3',
-    worker_id: 'w-6',
-    worker_name: 'Rahmat Hidayat',
-    worker_nik_last4: '0006',
-    from_vessel_id: 'v-3',
-    from_vessel_name: 'KM Bahari Utama VII',
-    from_company_id: 'c-3',
-    from_company_name: 'CV Sinar Nusantara Maritime',
-    to_vessel_id: 'v-1',
-    to_vessel_name: 'KM Sinar Laut 01',
-    to_company_id: 'c-1',
-    to_company_name: 'PT Samudera Bahari Indonesia',
-    transfer_date: '2025-02-15T09:00:00Z',
-    reason: 'permintaan_pribadi',
-    notes: 'Pindah kapal atas inisiatif sendiri, sering berpindah kapal dalam 6 bulan terakhir.',
-    clearance_status: 'menunggu_klarifikasi',
-    recorded_by_name: 'Dewi Kusuma'
-  }
-];
-
-const INITIAL_DUPLICATE_ALERTS: CrewDuplicationAlert[] = [
-  {
-    id: 'alert-dup-1',
-    worker_id: 'w-4',
-    worker_name: 'Dedi Kurniawan',
-    worker_nik_last4: '0002',
-    worker_phone: '082155667788',
-    primary_vessel_id: 'v-1',
-    primary_vessel_name: 'KM Sinar Laut 01',
-    primary_company_name: 'PT Samudera Bahari Indonesia',
-    conflicting_vessel_id: 'v-2',
-    conflicting_vessel_name: 'KM Mina Jaya 88',
-    conflicting_company_name: 'PT Mina Jaya Lautan',
-    conflict_type: 'at_sea_conflict',
-    detected_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-    status: 'aktif',
-    resolution_notes: 'Pekerja terdata sedang berlayar di KM Sinar Laut 01 (status: di_laut). Namun diajukan pada draft crew KM Mina Jaya 88.'
-  }
-];
-
-const INITIAL_CLEARANCES_SEED: ClearanceRecord[] = [
-  {
-    id: 'clr-seed-1',
-    worker_id: 'w-9',
-    worker_name: 'Suratman Hadi',
-    worker_nik_last4: '0009',
-    vessel_id: 'v-3',
-    vessel_name: 'KM Bahari Utama VII',
-    company_name: 'CV Sinar Nusantara Maritime',
-    port: 'PPS Bitung',
-    timestamp: new Date(Date.now() - 14 * 86400000).toISOString(),
-    status: 'ada_tanggungan',
-    category: 'kasbon_pinjaman',
-    amount: 1500000,
-    notes: 'Sisa kasbon perbekalan dan pinjaman darurat pelayaran lalu belum diselesaikan dengan kasir kapal.',
-    recorded_by_name: 'Capt. Herman Sudrajat'
-  },
-  {
-    id: 'clr-seed-2',
-    worker_id: 'w-10',
-    worker_name: 'Agus Setiawan',
-    worker_nik_last4: '0010',
-    vessel_id: 'v-1',
-    vessel_name: 'KM Sinar Laut 01',
-    company_name: 'PT Samudera Bahari Indonesia',
-    port: 'PPS Nizam Zachman Jakarta',
-    timestamp: new Date(Date.now() - 25 * 86400000).toISOString(),
-    status: 'bebas_tanggungan',
-    notes: 'Peralatan kapal lengkap, bagi hasil diselesaikan penuh. Bebas transfer ke kapal manapun.',
-    recorded_by_name: 'Hendra Gunawan'
-  }
-];
+// DATA SEED BERSIH (0 DATA DUMMY - 100% SIAP DATA REAL)
+const INITIAL_COMPANIES: Company[] = [];
+const INITIAL_VESSELS: Vessel[] = [];
+const INITIAL_WORKERS_SEED: any[] = [];
+const INITIAL_MOBILITY_SEED: WorkerMobilityRecord[] = [];
+const INITIAL_DUPLICATE_ALERTS: CrewDuplicationAlert[] = [];
+const INITIAL_CLEARANCES_SEED: ClearanceRecord[] = [];
 
 const STORAGE_KEYS = {
-  WORKERS: 'abk_system_workers_v3',
-  EVENTS: 'abk_system_events_v3',
-  VESSELS: 'abk_system_vessels_v3',
-  COMPANIES: 'abk_system_companies_v3',
-  MANIFESTS: 'abk_system_manifests_v3',
-  DISCREPANCIES: 'abk_system_discrepancies_v3',
-  MOBILITY: 'abk_system_mobility_v3',
-  DUPLICATES: 'abk_system_duplicates_v3',
-  CLEARANCES: 'abk_system_clearance_v3',
-  USER: 'abk_system_active_user_v3'
+  WORKERS: "abk_system_workers_v4_real",
+  EVENTS: "abk_system_events_v4_real",
+  VESSELS: "abk_system_vessels_v4_real",
+  COMPANIES: "abk_system_companies_v4_real",
+  MANIFESTS: "abk_system_manifests_v4_real",
+  DISCREPANCIES: "abk_system_discrepancies_v4_real",
+  MOBILITY: "abk_system_mobility_v4_real",
+  DUPLICATES: "abk_system_duplicates_v4_real",
+  CLEARANCES: "abk_system_clearance_v4_real",
+  USER: "abk_system_active_user_v4_real"
 };
 
 export class DataStore {
@@ -601,251 +98,138 @@ export class DataStore {
     this.init();
   }
 
+  private isSupabaseSyncing: boolean = false;
+
   private async init() {
-    // Load companies
+    // 1. Bersihkan seluruh jejak data dummy versi lama dari localStorage browser
+    try {
+      const oldKeys = [
+        "abk_system_workers_v3", "abk_system_events_v3", "abk_system_vessels_v3",
+        "abk_system_companies_v3", "abk_system_manifests_v3", "abk_system_discrepancies_v3",
+        "abk_system_mobility_v3", "abk_system_duplicates_v3", "abk_system_clearance_v3",
+        "abk_system_workers_v2", "abk_system_workers_v1"
+      ];
+      oldKeys.forEach(k => localStorage.removeItem(k));
+    } catch (e) {
+      // ignore
+    }
+
+    // 2. Muat data riil dari localStorage (default kosong jika baru pertama kali)
     const savedCompanies = localStorage.getItem(STORAGE_KEYS.COMPANIES);
-    this.companies = savedCompanies ? JSON.parse(savedCompanies) : INITIAL_COMPANIES;
+    this.companies = savedCompanies ? JSON.parse(savedCompanies) : [];
 
-    // Load vessels
     const savedVessels = localStorage.getItem(STORAGE_KEYS.VESSELS);
-    this.vessels = savedVessels ? JSON.parse(savedVessels) : INITIAL_VESSELS;
+    this.vessels = savedVessels ? JSON.parse(savedVessels) : [];
 
-    // Load active user
     const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
     if (savedUser) {
       this.currentUser = JSON.parse(savedUser);
     }
 
-    // Load workers or seed
     const savedWorkers = localStorage.getItem(STORAGE_KEYS.WORKERS);
     if (savedWorkers) {
       const parsedWorkers: Worker[] = JSON.parse(savedWorkers);
-      this.workers = parsedWorkers.map(w => {
-        if (!w.last_vessel_id && w.last_vessel_name) {
-          const matched = this.vessels.find(v => v.name.toLowerCase() === w.last_vessel_name?.toLowerCase());
-          if (matched) return { ...w, last_vessel_id: matched.id };
-        }
-        return w;
-      });
-
-      // Synchronize any newly added seed workers (e.g., w-8 and w-9)
-      for (const seed of INITIAL_WORKERS_SEED) {
-        if (!this.workers.some(w => w.id === seed.id)) {
-          this.workers.push({
-            id: seed.id,
-            name: seed.name,
-            nik_hash: await hashNik(seed.nikRaw),
-            nik_last4: seed.nikRaw.slice(-4),
-            dob: seed.dob,
-            phone: seed.phone,
-            home_port: seed.home_port,
-            current_status: seed.status,
-            last_vessel_id: seed.vessel_id,
-            last_vessel_name: seed.vessel_name,
-            position: seed.position,
-            performance_rating: seed.performance_rating,
-            performance_notes: seed.performance_notes,
-            pkl_number: seed.pkl_number,
-            pkl_start_date: seed.pkl_start_date,
-            pkl_expiry_date: seed.pkl_expiry_date,
-            pkl_company_name: seed.pkl_company_name,
-            pkl_status: seed.pkl_status,
-            bst_number: seed.bst_number,
-            bst_expiry: seed.bst_expiry,
-            seaman_book_number: seed.seaman_book_number,
-            seaman_book_expiry: seed.seaman_book_expiry,
-            competency_cert: seed.competency_cert,
-            mcu_status: seed.mcu_status,
-            bpjs_tk_number: seed.bpjs_tk_number,
-            bpjs_tk_active: seed.bpjs_tk_active,
-            bpjs_kes_number: seed.bpjs_kes_number,
-            bpjs_kes_active: seed.bpjs_kes_active,
-            created_at: new Date().toISOString()
-          });
-        }
-      }
-      this.saveWorkers();
+      // Buang jika ada record dummy lama (w-1 s/d w-12)
+      this.workers = parsedWorkers.filter(w => !w.id.startsWith("w-") || w.id.length > 5);
     } else {
-      // Create seed workers with hashed NIKs
-      this.workers = await Promise.all(
-        INITIAL_WORKERS_SEED.map(async (seed) => ({
-          id: seed.id,
-          name: seed.name,
-          nik_hash: await hashNik(seed.nikRaw),
-          nik_last4: seed.nikRaw.slice(-4),
-          dob: seed.dob,
-          phone: seed.phone,
-          home_port: seed.home_port,
-          current_status: seed.status,
-          last_vessel_id: seed.vessel_id,
-          last_vessel_name: seed.vessel_name,
-          position: seed.position,
-          performance_rating: seed.performance_rating,
-          performance_notes: seed.performance_notes,
-          pkl_number: seed.pkl_number,
-          pkl_start_date: seed.pkl_start_date,
-          pkl_expiry_date: seed.pkl_expiry_date,
-          pkl_company_name: seed.pkl_company_name,
-          pkl_status: seed.pkl_status,
-          bst_number: seed.bst_number,
-          bst_expiry: seed.bst_expiry,
-          seaman_book_number: seed.seaman_book_number,
-          seaman_book_expiry: seed.seaman_book_expiry,
-          passport_number: seed.passport_number,
-          passport_expiry: seed.passport_expiry,
-          competency_cert: seed.competency_cert,
-          mcu_status: seed.mcu_status,
-          bpjs_tk_number: seed.bpjs_tk_number,
-          bpjs_tk_active: seed.bpjs_tk_active,
-          bpjs_kes_number: seed.bpjs_kes_number,
-          bpjs_kes_active: seed.bpjs_kes_active,
-          created_at: new Date(Date.now() - Math.floor(Math.random() * 30 * 86400000)).toISOString()
-        }))
-      );
-      this.saveWorkers();
+      this.workers = [];
     }
 
-    // Load manifests or seed initial historical manifests
     const savedManifests = localStorage.getItem(STORAGE_KEYS.MANIFESTS);
-    if (savedManifests) {
-      this.manifests = JSON.parse(savedManifests);
-    } else {
-      this.manifests = [
-        {
-          id: 'm-1',
-          manifest_number: 'MAN-KEBERANGKATAN-2026-001',
-          vessel_id: 'v-1',
-          vessel_name: 'KM Sinar Laut 01',
-          vessel_registration: 'SIPI.321/KKP/2023',
-          company_name: 'PT Samudera Bahari Indonesia',
-          type: 'keberangkatan',
-          timestamp: new Date(Date.now() - 35 * 86400000).toISOString(), // 35 hari lalu (Overdue test)
-          port: 'PPS Nizam Zachman Jakarta',
-          recorded_by_user_id: 'u-syahbandar-1',
-          recorded_by_name: 'Budi Santoso (Syahbandar Utama)',
-          recorded_by_role: 'syahbandar',
-          total_workers: 2,
-          workers: [
-            { worker_id: 'w-4', worker_name: 'Dedi Kurniawan', worker_nik_last4: '0002', home_port: 'PPS Benoa', disembarked: false },
-            { worker_id: 'w-6', worker_name: 'Rahmat Hidayat', worker_nik_last4: '0006', home_port: 'PPS Nizam Zachman Jakarta', disembarked: false }
-          ],
-          notes: 'Pelayaran penangkapan tuna Laut Arafura (30 Hari)'
-        },
-        {
-          id: 'm-2',
-          manifest_number: 'MAN-KEBERANGKATAN-2026-002',
-          vessel_id: 'v-2',
-          vessel_name: 'KM Mina Jaya 88',
-          vessel_registration: 'SIPI.882/KKP/2022',
-          company_name: 'PT Mina Jaya Lautan',
-          type: 'keberangkatan',
-          timestamp: new Date(Date.now() - 10 * 86400000).toISOString(),
-          port: 'PPS Bitung',
-          recorded_by_user_id: 'u-syahbandar-2',
-          recorded_by_name: 'Siti Rahma (Syahbandar Bitung)',
-          recorded_by_role: 'syahbandar',
-          total_workers: 1,
-          workers: [
-            { worker_id: 'w-2', worker_name: 'Bambang Supriyanto', worker_nik_last4: '0003', home_port: 'PPS Bitung', disembarked: false }
-          ],
-          notes: 'Pelayaran rutin WPP-716'
-        }
-      ];
-      this.saveManifests();
-    }
+    this.manifests = savedManifests ? JSON.parse(savedManifests) : [];
 
-    // Load discrepancies or seed
     const savedDiscrepancies = localStorage.getItem(STORAGE_KEYS.DISCREPANCIES);
-    if (savedDiscrepancies) {
-      this.discrepancies = JSON.parse(savedDiscrepancies);
-    } else {
-      this.discrepancies = [
-        {
-          id: 'disc-1',
-          type: 'overdue_at_sea',
-          worker_id: 'w-4',
-          worker_name: 'Dedi Kurniawan',
-          worker_nik_last4: '0002',
-          vessel_id: 'v-1',
-          vessel_name: 'KM Sinar Laut 01',
-          departure_manifest_id: 'm-1',
-          departure_manifest_number: 'MAN-KEBERANGKATAN-2026-001',
-          departure_date: new Date(Date.now() - 35 * 86400000).toISOString(),
-          days_at_sea: 35,
-          port: 'PPS Nizam Zachman Jakarta',
-          status: 'perlu_tinjauan',
-          detected_at: new Date(Date.now() - 5 * 86400000).toISOString(),
-          notes: 'Pekerja berada di laut melebihi 30 hari tanpa manifest kedatangan terverifikasi. Perlu konfirmasi nahkoda.'
-        },
-        {
-          id: 'disc-2',
-          type: 'unlisted_on_departure',
-          worker_id: 'w-5',
-          worker_name: 'Asep Saepullah',
-          worker_nik_last4: '0005',
-          vessel_id: 'v-2',
-          vessel_name: 'KM Mina Jaya 88',
-          port: 'PPS Bitung',
-          status: 'perlu_tinjauan',
-          detected_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-          notes: 'Pekerja dilaporkan turun dari kapal KM Mina Jaya 88 tetapi TIDAK tercatat di manifest keberangkatan resmi. Sinyal dugaan pekerja tidak berdokumen.'
-        }
-      ];
-      this.saveDiscrepancies();
-    }
+    this.discrepancies = savedDiscrepancies ? JSON.parse(savedDiscrepancies) : [];
 
-    // Load legacy events or seed
     const savedEvents = localStorage.getItem(STORAGE_KEYS.EVENTS);
-    if (savedEvents) {
-      this.events = JSON.parse(savedEvents);
-    } else {
-      this.events = [
-        {
-          id: 'e-1',
-          worker_id: 'w-2',
-          worker_name: 'Bambang Supriyanto',
-          worker_nik_last4: '0003',
-          vessel_id: 'v-2',
-          vessel_name: 'KM Mina Jaya 88',
-          event_type: 'keluar',
-          timestamp: new Date(Date.now() - 10 * 86400000).toISOString(),
-          port: 'PPS Bitung',
-          recorded_by_user_id: 'u-syahbandar-2',
-          recorded_by_name: 'Siti Rahma (Syahbandar Bitung)',
-          recorded_by_role: 'syahbandar',
-          manifest_id: 'm-2',
-          notes: 'Didaftarkan melalui Manifest Keberangkatan MAN-KEBERANGKATAN-2026-002'
-        }
-      ];
-      this.saveEvents();
-    }
+    this.events = savedEvents ? JSON.parse(savedEvents) : [];
 
-    // Load mobility records or seed
     const savedMobility = localStorage.getItem(STORAGE_KEYS.MOBILITY);
-    if (savedMobility) {
-      this.mobilityRecords = JSON.parse(savedMobility);
-    } else {
-      this.mobilityRecords = INITIAL_MOBILITY_SEED;
-      this.saveMobility();
-    }
+    this.mobilityRecords = savedMobility ? JSON.parse(savedMobility) : [];
 
-    // Load duplicate alerts or seed
     const savedDuplicates = localStorage.getItem(STORAGE_KEYS.DUPLICATES);
-    if (savedDuplicates) {
-      this.duplicateAlerts = JSON.parse(savedDuplicates);
-    } else {
-      this.duplicateAlerts = INITIAL_DUPLICATE_ALERTS;
-      this.saveDuplicates();
-    }
+    this.duplicateAlerts = savedDuplicates ? JSON.parse(savedDuplicates) : [];
 
-    // Load clearance records or seed
     const savedClearances = localStorage.getItem(STORAGE_KEYS.CLEARANCES);
-    if (savedClearances) {
-      this.clearanceRecords = JSON.parse(savedClearances);
-    } else {
-      this.clearanceRecords = INITIAL_CLEARANCES_SEED;
-      this.saveClearances();
+    this.clearanceRecords = savedClearances ? JSON.parse(savedClearances) : [];
+
+    // 3. Otomatis sinkronisasi data riil dari Supabase jika konfigurasi tersedia
+    this.refreshFromSupabase().catch(err => console.log("Supabase sync notice:", err));
+  }
+
+  /**
+   * Mengambil dan memperbarui data riil langsung dari Cloud Supabase
+   */
+  public async refreshFromSupabase(): Promise<{ success: boolean; message: string }> {
+    if (this.isSupabaseSyncing) return { success: false, message: "Sinkronisasi sedang berlangsung..." };
+    this.isSupabaseSyncing = true;
+
+    try {
+      const res = await fetchAllFromSupabase();
+      if (res.error) {
+        this.isSupabaseSyncing = false;
+        return { success: false, message: res.error };
+      }
+
+      if (res.companies && res.companies.length > 0) {
+        this.companies = res.companies;
+        this.saveCompanies();
+      }
+      if (res.vessels && res.vessels.length > 0) {
+        this.vessels = res.vessels;
+        this.saveVessels();
+      }
+      if (res.workers && res.workers.length > 0) {
+        this.workers = res.workers;
+        this.saveWorkers();
+      }
+      if (res.manifests && res.manifests.length > 0) {
+        this.manifests = res.manifests;
+        this.saveManifests();
+      }
+      if (res.alerts && res.alerts.length > 0) {
+        this.duplicateAlerts = res.alerts;
+        this.saveDuplicates();
+      }
+
+      this.isSupabaseSyncing = false;
+      return { 
+        success: true, 
+        message: `Sinkronisasi Supabase berhasil: ${this.workers.length} ABK, ${this.vessels.length} Kapal, ${this.companies.length} Perusahaan.` 
+      };
+    } catch (e) {
+      this.isSupabaseSyncing = false;
+      return { success: false, message: e?.message || "Gagal terhubung ke Supabase" };
     }
+  }
+
+  /**
+   * Mengosongkan seluruh data lokal (reset ke kondisi kosong murni)
+   */
+  public async clearAllData(): Promise<void> {
+    this.workers = [];
+    this.events = [];
+    this.vessels = [];
+    this.companies = [];
+    this.manifests = [];
+    this.discrepancies = [];
+    this.mobilityRecords = [];
+    this.duplicateAlerts = [];
+    this.clearanceRecords = [];
+
+    this.saveWorkers();
+    this.saveEvents();
+    this.saveVessels();
+    this.saveCompanies();
+    this.saveManifests();
+    this.saveDiscrepancies();
+    this.saveMobility();
+    this.saveDuplicates();
+    this.saveClearances();
+  }
+
+  public isSupabaseConnected(): boolean {
+    return getSupabaseClient() !== null;
   }
 
   private saveClearances() {
@@ -981,6 +365,9 @@ export class DataStore {
     this.workers.unshift(newWorker);
     this.saveWorkers();
 
+    // Simpan otomatis ke Supabase jika terhubung
+    dbInsertWorker(newWorker).catch(err => console.log('Supabase sync worker:', err));
+
     return { success: true, worker: newWorker };
   }
 
@@ -1000,7 +387,7 @@ export class DataStore {
       return { success: false, error: 'Nomor registrasi SIPI/SIUP wajib diisi.' };
     }
 
-    const companyName = data.company_name?.trim() || 'PT Samudera Bahari Indonesia';
+    const companyName = data.company_name?.trim() || (this.companies.length > 0 ? this.companies[0].name : 'Perusahaan Anggota ATLI');
 
     // Find or create company
     let company = this.companies.find(
@@ -1020,7 +407,8 @@ export class DataStore {
         created_at: new Date().toISOString()
       };
       this.companies.push(company);
-      localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(this.companies));
+      this.saveCompanies();
+      dbInsertCompany(company).catch(err => console.log('Supabase sync company:', err));
     }
 
     const newVessel: Vessel = {
@@ -1035,7 +423,10 @@ export class DataStore {
     };
 
     this.vessels.unshift(newVessel);
-    localStorage.setItem(STORAGE_KEYS.VESSELS, JSON.stringify(this.vessels));
+    this.saveVessels();
+
+    // Simpan otomatis ke Supabase jika terhubung
+    dbInsertVessel(newVessel).catch(err => console.log('Supabase sync vessel:', err));
 
     return { success: true, vessel: newVessel };
   }
@@ -1327,6 +718,9 @@ export class DataStore {
     this.saveManifests();
     this.saveEvents();
 
+    // Simpan otomatis manifest ke Supabase jika terhubung
+    dbInsertManifest(newManifest).catch(err => console.log('Supabase sync manifest:', err));
+
     return { success: true, manifest: newManifest };
   }
 
@@ -1601,6 +995,9 @@ export class DataStore {
     this.saveMobility();
     this.saveClearances();
 
+    // Simpan otomatis manifest kedatangan ke Supabase jika terhubung
+    dbInsertManifest(newManifest).catch(err => console.log('Supabase sync manifest arrival:', err));
+
     return { 
       success: true, 
       manifest: newManifest, 
@@ -1793,6 +1190,9 @@ export class DataStore {
     this.duplicateAlerts.unshift(newAlert);
     this.saveDuplicates();
 
+    // Simpan otomatis ke Supabase jika terhubung
+    dbInsertDuplicateAlert(newAlert).catch(err => console.log('Supabase sync alert:', err));
+
     return newAlert;
   }
 
@@ -1913,6 +1313,9 @@ export class DataStore {
 
     this.mobilityRecords.unshift(mobilityRecord);
     this.saveMobility();
+
+    // Simpan otomatis ke Supabase jika terhubung
+    dbInsertMobility(mobilityRecord).catch(err => console.log('Supabase sync mobility:', err));
 
     // Update worker current vessel & company
     const currentTransfers = (worker.transfer_count || 0) + 1;
