@@ -73,7 +73,12 @@ let supabaseInstance: SupabaseClient | null = null;
 
 // Selalu mengembalikan instance Supabase Client yang aktif dan siap digunakan
 export function getSupabaseClient(): SupabaseClient {
-  if (supabaseInstance) return supabaseInstance;
+  if (supabaseInstance) {
+    if (typeof window !== 'undefined' && !(window as any).client) {
+      (window as any).client = supabaseInstance;
+    }
+    return supabaseInstance;
+  }
 
   const config = getSupabaseConfig();
   try {
@@ -88,11 +93,17 @@ export function getSupabaseClient(): SupabaseClient {
         }
       }
     });
+
+    if (typeof window !== 'undefined') {
+      (window as any).client = supabaseInstance;
+    }
     return supabaseInstance;
   } catch (err) {
     console.error('Failed to initialize Supabase client:', err);
-    // Fallback instance
     supabaseInstance = createClient(BUILTIN_SUPABASE_URL, BUILTIN_SUPABASE_ANON_KEY);
+    if (typeof window !== 'undefined') {
+      (window as any).client = supabaseInstance;
+    }
     return supabaseInstance;
   }
 }
@@ -113,8 +124,10 @@ export function saveSupabaseConfig(url: string, key: string): { success: boolean
       supabaseKey: cleanKey
     }));
 
-    // Reset instance so it picks up the new config
     supabaseInstance = createClient(cleanUrl, cleanKey);
+    if (typeof window !== 'undefined') {
+      (window as any).client = supabaseInstance;
+    }
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e?.message || 'Gagal menyimpan konfigurasi' };
@@ -124,6 +137,9 @@ export function saveSupabaseConfig(url: string, key: string): { success: boolean
 export function resetToBuiltinConfig(): void {
   localStorage.removeItem(STORAGE_KEY_CONFIG);
   supabaseInstance = createClient(BUILTIN_SUPABASE_URL, BUILTIN_SUPABASE_ANON_KEY);
+  if (typeof window !== 'undefined') {
+    (window as any).client = supabaseInstance;
+  }
 }
 
 export function clearSupabaseConfig(): void {
@@ -135,34 +151,77 @@ export async function testSupabaseConnection(): Promise<{
   message: string; 
   latencyMs?: number;
   isRlsBlocked?: boolean;
+  workerCount?: number;
+  vesselCount?: number;
+  companyCount?: number;
+  tablesFound?: string[];
+  tablesMissing?: string[];
 }> {
   const client = getSupabaseClient();
   const startTime = performance.now();
 
   try {
-    const { data, error } = await client.from('companies').select('id').limit(1);
+    const [cTest, vTest, wTest] = await Promise.all([
+      client.from('companies').select('id', { count: 'exact', head: true }),
+      client.from('vessels').select('id', { count: 'exact', head: true }),
+      client.from('workers').select('id', { count: 'exact' }).limit(5)
+    ]);
+
     const latencyMs = Math.round(performance.now() - startTime);
 
-    if (error) {
-      if (error.code === '42501' || error.message.toLowerCase().includes('row-level security') || error.message.toLowerCase().includes('policy')) {
-        return {
-          success: true,
-          isRlsBlocked: true,
-          latencyMs,
-          message: 'Server Supabase terhubung online. Memerlukan izin RLS (buka SQL izin RLS).'
-        };
-      }
-      return { 
-        success: false, 
-        message: `Error Supabase: ${error.message}`, 
-        latencyMs 
+    const tablesFound: string[] = [];
+    const tablesMissing: string[] = [];
+    let isRlsBlocked = false;
+
+    if (!cTest.error) tablesFound.push('companies');
+    else if (cTest.error.code === '42P01') tablesMissing.push('companies');
+    else if (cTest.error.code === '42501' || cTest.error.message.includes('row-level security')) isRlsBlocked = true;
+
+    if (!vTest.error) tablesFound.push('vessels');
+    else if (vTest.error.code === '42P01') tablesMissing.push('vessels');
+    else if (vTest.error.code === '42501' || vTest.error.message.includes('row-level security')) isRlsBlocked = true;
+
+    if (!wTest.error) tablesFound.push('workers');
+    else if (wTest.error.code === '42P01') tablesMissing.push('workers');
+    else if (wTest.error.code === '42501' || wTest.error.message.includes('row-level security')) isRlsBlocked = true;
+
+    const workerCount = wTest.count ?? (wTest.data ? wTest.data.length : 0);
+    const vesselCount = vTest.count ?? 0;
+    const companyCount = cTest.count ?? 0;
+
+    if (tablesMissing.length > 0) {
+      return {
+        success: false,
+        message: `Tabel belum dibuat di Supabase (${tablesMissing.join(', ')} belum ada). Jalankan SQL Schema di SQL Editor Supabase.`,
+        latencyMs,
+        tablesFound,
+        tablesMissing,
+        isRlsBlocked
       };
     }
+
+    if (isRlsBlocked) {
+      return {
+        success: true,
+        isRlsBlocked: true,
+        latencyMs,
+        message: 'Server Supabase terhubung, namun izin Row Level Security (RLS) masih membatasi akses multi-device. Salin & jalankan skrip buka akses RLS.',
+        tablesFound,
+        workerCount,
+        vesselCount,
+        companyCount
+      };
+    }
+
     return { 
       success: true, 
       isRlsBlocked: false, 
       latencyMs, 
-      message: `Terhubung & Siap (${latencyMs}ms)` 
+      message: `Terhubung & Siap (${latencyMs}ms, ${workerCount} ABK, ${vesselCount} Kapal di Cloud)`,
+      tablesFound,
+      workerCount,
+      vesselCount,
+      companyCount
     };
   } catch (e: any) {
     const latencyMs = Math.round(performance.now() - startTime);
@@ -175,7 +234,7 @@ export async function testSupabaseConnection(): Promise<{
 }
 
 /**
- * Sync Methods - Push data directly to Supabase with UUID sanitation & foreign key resolution
+ * Sync Methods - Push data directly to Supabase using resilient Select -> Update/Insert
  */
 
 export async function dbInsertCompany(company: Company): Promise<{ success: boolean; data?: any; error?: string }> {
@@ -184,21 +243,74 @@ export async function dbInsertCompany(company: Company): Promise<{ success: bool
 
   try {
     const companyId = isValidUuid(company.id) ? company.id : generateUUID();
+    const cleanCode = (company.code || company.name.slice(0, 4)).toUpperCase().trim();
     const payload: any = {
-      id: companyId,
-      name: company.name,
-      code: company.code || company.name.slice(0, 4).toUpperCase(),
-      license_number: company.license_number,
-      pic_name: company.pic_name,
-      pic_role: company.pic_role,
-      pic_phone: company.pic_phone,
-      pic_email: company.pic_email,
-      address: company.address
+      name: company.name.trim(),
+      code: cleanCode,
+      license_number: company.license_number || '',
+      pic_name: company.pic_name || 'Staf Personalia',
+      pic_role: company.pic_role || 'Koordinator Personil',
+      pic_phone: company.pic_phone || '0812-0000-0000',
+      pic_email: company.pic_email || `ops@${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'atli'}.id`,
+      address: company.address || 'Kawasan Pelabuhan'
     };
 
-    const { data, error } = await client.from('companies').upsert(payload, { onConflict: 'code' }).select().single();
-    if (error) throw error;
-    return { success: true, data: data || { ...payload, id: companyId } };
+    // 1. Cek apakah sudah ada perusahaan dengan code ini (aman dari error koma syntax PostgREST)
+    const { data: byCode } = await client
+      .from('companies')
+      .select('id')
+      .eq('code', cleanCode)
+      .limit(1);
+
+    if (byCode && byCode.length > 0) {
+      const existingId = byCode[0].id;
+      const { data, error } = await client
+        .from('companies')
+        .update(payload)
+        .eq('id', existingId)
+        .select();
+      if (error) throw error;
+      return { success: true, data: (data && data[0]) || { ...payload, id: existingId } };
+    }
+
+    // 2. Cek apakah ada perusahaan dengan nama yang sama persis
+    const { data: byName } = await client
+      .from('companies')
+      .select('id')
+      .eq('name', company.name.trim())
+      .limit(1);
+
+    if (byName && byName.length > 0) {
+      const existingId = byName[0].id;
+      const { data, error } = await client
+        .from('companies')
+        .update(payload)
+        .eq('id', existingId)
+        .select();
+      if (error) throw error;
+      return { success: true, data: (data && data[0]) || { ...payload, id: existingId } };
+    }
+
+    // 3. Masukkan data baru
+    const { data, error } = await client
+      .from('companies')
+      .insert({ ...payload, id: companyId })
+      .select();
+
+    if (error) {
+      // Jika duplicate key, coba update
+      if (error.code === '23505') {
+        const { data: retryData } = await client
+          .from('companies')
+          .update(payload)
+          .eq('code', cleanCode)
+          .select();
+        return { success: true, data: (retryData && retryData[0]) || { ...payload, id: companyId } };
+      }
+      throw error;
+    }
+
+    return { success: true, data: (data && data[0]) || { ...payload, id: companyId } };
   } catch (err: any) {
     console.error('dbInsertCompany error:', err);
     return { success: false, error: err.message };
@@ -212,43 +324,51 @@ export async function dbInsertVessel(vessel: Vessel): Promise<{ success: boolean
   try {
     let companyUuid = isValidUuid(vessel.company_id) ? vessel.company_id : null;
 
-    // Jika company_id belum berupa UUID, cari atau buatkan company di Supabase
+    // Verifikasi bahwa companyUuid benar-benar ada di Supabase
+    if (companyUuid) {
+      const { data: cExists } = await client.from('companies').select('id').eq('id', companyUuid).limit(1);
+      if (!cExists || cExists.length === 0) {
+        companyUuid = null; // Reset agar dicari atau dibuatkan
+      }
+    }
+
+    // Jika company_id belum ada di Supabase, cari berdasarkan nama atau buatkan
     if (!companyUuid) {
       if (vessel.company_name) {
         const { data: compSearch } = await client
           .from('companies')
           .select('id')
-          .eq('name', vessel.company_name)
+          .eq('name', vessel.company_name.trim())
           .limit(1);
         if (compSearch && compSearch.length > 0) {
           companyUuid = compSearch[0].id;
         }
       }
 
-      // Jika belum ditemukan, buatkan perusahaannya terlebih dahulu
+      // Jika belum ditemukan, buatkan perusahaannya terlebih dahulu di Supabase
       if (!companyUuid) {
-        const fallbackName = vessel.company_name || 'PT Armada Perikanan Indonesia';
-        const fallbackCode = fallbackName.slice(0, 4).toUpperCase() + Math.floor(100 + Math.random() * 900);
-        const { data: newComp } = await client
-          .from('companies')
-          .upsert({
-            id: generateUUID(),
-            name: fallbackName,
-            code: fallbackCode,
-            pic_name: 'Staf Operasional',
-            pic_phone: '0812-3456-7890',
-            pic_email: `ops@${fallbackCode.toLowerCase()}.id`
-          }, { onConflict: 'code' })
-          .select('id')
-          .single();
-        if (newComp) {
-          companyUuid = newComp.id;
+        const fallbackName = vessel.company_name?.trim() || 'PT Samudera Bahari Indonesia';
+        const fallbackCode = fallbackName.slice(0, 4).toUpperCase();
+        const compRes = await dbInsertCompany({
+          id: generateUUID(),
+          name: fallbackName,
+          code: fallbackCode,
+          license_number: 'SIUP-KKP-DEFAULT',
+          pic_name: 'Staf Operasional',
+          pic_role: 'Koordinator',
+          pic_phone: '0812-0000-0000',
+          pic_email: `ops@${fallbackCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'atli'}.id`,
+          address: 'Kawasan Pelabuhan Perikanan',
+          created_at: new Date().toISOString()
+        });
+        if (compRes.success && compRes.data?.id) {
+          companyUuid = compRes.data.id;
         }
       }
     }
 
+    // Jika tetap belum ada, ambil ID perusahaan pertama di Supabase
     if (!companyUuid) {
-      // Jika masih tidak ada, ambil perusahaan pertama yang ada
       const { data: anyComp } = await client.from('companies').select('id').limit(1);
       if (anyComp && anyComp.length > 0) {
         companyUuid = anyComp[0].id;
@@ -257,21 +377,59 @@ export async function dbInsertVessel(vessel: Vessel): Promise<{ success: boolean
 
     const vesselId = isValidUuid(vessel.id) ? vessel.id : generateUUID();
     const payload: any = {
-      id: vesselId,
-      name: vessel.name,
-      registration_number: vessel.registration_number,
+      name: vessel.name.trim(),
+      registration_number: vessel.registration_number.trim(),
       gross_tonnage: Number(vessel.gross_tonnage) || 30,
-      company_id: companyUuid,
-      company_name: vessel.company_name,
+      company_name: vessel.company_name || 'PT Samudera Bahari Indonesia',
       home_port: vessel.home_port || 'PPS Nizam Zachman Jakarta',
       captain_name: vessel.captain_name || null,
       status: vessel.status || 'sandar',
       active_crew_count: Number(vessel.active_crew_count) || 0
     };
 
-    const { data, error } = await client.from('vessels').upsert(payload, { onConflict: 'registration_number' }).select().single();
-    if (error) throw error;
-    return { success: true, data: data || { ...payload, id: vesselId } };
+    if (companyUuid) {
+      payload.company_id = companyUuid;
+    }
+
+    // 1. Cek apakah sudah ada kapal dengan nomor registrasi ini
+    const { data: existing } = await client
+      .from('vessels')
+      .select('id')
+      .eq('registration_number', vessel.registration_number.trim())
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      const existingId = existing[0].id;
+      const { data, error } = await client
+        .from('vessels')
+        .update(payload)
+        .eq('id', existingId)
+        .select();
+      if (error) throw error;
+      return { success: true, data: (data && data[0]) || { ...payload, id: existingId } };
+    } else {
+      const { data, error } = await client
+        .from('vessels')
+        .insert({ ...payload, id: vesselId })
+        .select();
+
+      if (error) {
+        // Jika error foreign key company_id, ambil perusahaan default pertama lalu coba lagi
+        if (error.code === '23503') {
+          const { data: firstComp } = await client.from('companies').select('id').limit(1);
+          if (firstComp && firstComp.length > 0) {
+            payload.company_id = firstComp[0].id;
+            const { data: retryData, error: retryErr } = await client
+              .from('vessels')
+              .insert({ ...payload, id: vesselId })
+              .select();
+            if (!retryErr) return { success: true, data: (retryData && retryData[0]) || { ...payload, id: vesselId } };
+          }
+        }
+        throw error;
+      }
+      return { success: true, data: (data && data[0]) || { ...payload, id: vesselId } };
+    }
   } catch (err: any) {
     console.error('dbInsertVessel error:', err);
     return { success: false, error: err.message };
@@ -284,18 +442,24 @@ export async function dbInsertWorker(worker: Worker): Promise<{ success: boolean
 
   try {
     const workerId = isValidUuid(worker.id) ? worker.id : generateUUID();
-    const payload: any = {
-      id: workerId,
-      name: worker.name,
+    
+    // Core payload (kolom-kolom standar yang pasti ada)
+    const corePayload: any = {
+      name: worker.name.trim(),
       nik_hash: worker.nik_hash,
       nik_last4: worker.nik_last4,
-      dob: worker.dob || '1990-01-01',
-      phone: worker.phone || '-',
+      dob: worker.dob && worker.dob.length >= 10 ? worker.dob.slice(0, 10) : '1990-01-01',
+      phone: worker.phone?.trim() || '-',
       home_port: worker.home_port || 'PPS Nizam Zachman Jakarta',
       current_status: worker.current_status || 'di_darat',
+      position: worker.position || 'Kelasi'
+    };
+
+    // Extended payload (fitur rating, PKL, sertifikat, tanggungan)
+    const fullPayload: any = {
+      ...corePayload,
       last_vessel_name: worker.last_vessel_name || null,
       company_name: worker.company_name || null,
-      position: worker.position || 'Kelasi',
       performance_rating: worker.performance_rating || 'hijau',
       performance_notes: worker.performance_notes || null,
       transfer_count: Number(worker.transfer_count) || 0,
@@ -316,16 +480,94 @@ export async function dbInsertWorker(worker: Worker): Promise<{ success: boolean
       tanggungan_notes: worker.tanggungan_notes || null
     };
 
+    // Validasi Foreign Keys: Hanya sertakan jika ID tersebut benar-benar ada di tabel Supabase
     if (isValidUuid(worker.last_vessel_id)) {
-      payload.last_vessel_id = worker.last_vessel_id;
+      const { data: vExists } = await client.from('vessels').select('id').eq('id', worker.last_vessel_id).limit(1);
+      if (vExists && vExists.length > 0) {
+        fullPayload.last_vessel_id = worker.last_vessel_id;
+      }
     }
     if (isValidUuid(worker.company_id)) {
-      payload.company_id = worker.company_id;
+      const { data: cExists } = await client.from('companies').select('id').eq('id', worker.company_id).limit(1);
+      if (cExists && cExists.length > 0) {
+        fullPayload.company_id = worker.company_id;
+      }
     }
 
-    const { data, error } = await client.from('workers').upsert(payload, { onConflict: 'nik_hash' }).select().single();
-    if (error) throw error;
-    return { success: true, data: data || { ...payload, id: workerId } };
+    // 1. Cek apakah worker dengan nik_hash ini sudah ada di Supabase
+    const { data: existing } = await client
+      .from('workers')
+      .select('id')
+      .eq('nik_hash', worker.nik_hash)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      const existingId = existing[0].id;
+      let updateRes = await client
+        .from('workers')
+        .update(fullPayload)
+        .eq('id', existingId)
+        .select();
+
+      // Jika gagal karena kolom belum ada (42703), fallback ke corePayload
+      if (updateRes.error && updateRes.error.code === '42703') {
+        updateRes = await client
+          .from('workers')
+          .update(corePayload)
+          .eq('id', existingId)
+          .select();
+      }
+
+      // Jika gagal karena foreign key (23503), hilangkan relasi ID
+      if (updateRes.error && updateRes.error.code === '23503') {
+        delete fullPayload.last_vessel_id;
+        delete fullPayload.company_id;
+        updateRes = await client
+          .from('workers')
+          .update(fullPayload)
+          .eq('id', existingId)
+          .select();
+      }
+
+      if (updateRes.error) throw updateRes.error;
+      return { success: true, data: (updateRes.data && updateRes.data[0]) || { ...fullPayload, id: existingId } };
+    } else {
+      let insertRes = await client
+        .from('workers')
+        .insert({ ...fullPayload, id: workerId })
+        .select();
+
+      // Jika error kolom belum ada di skema lama (42703), fallback ke corePayload
+      if (insertRes.error && insertRes.error.code === '42703') {
+        insertRes = await client
+          .from('workers')
+          .insert({ ...corePayload, id: workerId })
+          .select();
+      }
+
+      // Jika error foreign key (23503), hilangkan last_vessel_id dan company_id
+      if (insertRes.error && insertRes.error.code === '23503') {
+        delete fullPayload.last_vessel_id;
+        delete fullPayload.company_id;
+        insertRes = await client
+          .from('workers')
+          .insert({ ...fullPayload, id: workerId })
+          .select();
+      }
+
+      // Jika error duplicate nik_hash (23505), coba update
+      if (insertRes.error && insertRes.error.code === '23505') {
+        const { data: fData } = await client
+          .from('workers')
+          .update(fullPayload)
+          .eq('nik_hash', worker.nik_hash)
+          .select();
+        return { success: true, data: fData && fData[0] };
+      }
+
+      if (insertRes.error) throw insertRes.error;
+      return { success: true, data: (insertRes.data && insertRes.data[0]) || { ...fullPayload, id: workerId } };
+    }
   } catch (err: any) {
     console.error('dbInsertWorker error:', err);
     return { success: false, error: err.message };
@@ -341,7 +583,7 @@ export async function dbInsertManifest(manifest: Manifest): Promise<{ success: b
 
     if (!vesselUuid) {
       if (manifest.vessel_name) {
-        const { data: vSearch } = await client.from('vessels').select('id').eq('name', manifest.vessel_name).limit(1);
+        const { data: vSearch } = await client.from('vessels').select('id').eq('name', manifest.vessel_name.trim()).limit(1);
         if (vSearch && vSearch.length > 0) {
           vesselUuid = vSearch[0].id;
         }
@@ -359,90 +601,121 @@ export async function dbInsertManifest(manifest: Manifest): Promise<{ success: b
     }
 
     const manifestId = isValidUuid(manifest.id) ? manifest.id : generateUUID();
-    const { data: manifestData, error: mError } = await client.from('manifests').upsert({
-      id: manifestId,
-      manifest_number: manifest.manifest_number,
+    const payload: any = {
+      manifest_number: manifest.manifest_number.trim(),
       vessel_id: vesselUuid,
       type: manifest.type,
-      timestamp: manifest.timestamp,
-      port: manifest.port,
-      recorded_by_name: manifest.recorded_by_name,
-      recorded_by_role: manifest.recorded_by_role,
-      total_workers: manifest.total_workers,
-      notes: manifest.notes
-    }, { onConflict: 'manifest_number' }).select('id').single();
+      timestamp: manifest.timestamp || new Date().toISOString(),
+      port: manifest.port || 'PPS Nizam Zachman Jakarta',
+      recorded_by_name: manifest.recorded_by_name || 'Petugas',
+      recorded_by_role: manifest.recorded_by_role || 'syahbandar',
+      total_workers: manifest.total_workers || (manifest.workers ? manifest.workers.length : 0),
+      notes: manifest.notes || ''
+    };
 
-    if (mError) throw mError;
+    // Check existing
+    const { data: existing } = await client
+      .from('manifests')
+      .select('id')
+      .eq('manifest_number', manifest.manifest_number.trim())
+      .limit(1);
 
-    // Insert manifest workers if any
-    const finalManifestId = manifestData?.id || manifestId;
+    let finalManifestId = manifestId;
+
+    if (existing && existing.length > 0) {
+      finalManifestId = existing[0].id;
+      const { error } = await client
+        .from('manifests')
+        .update(payload)
+        .eq('id', finalManifestId);
+      if (error) throw error;
+    } else {
+      const { error } = await client
+        .from('manifests')
+        .insert({ ...payload, id: manifestId });
+      if (error) throw error;
+    }
+
+    // Insert manifest_workers items if available
     if (manifest.workers && manifest.workers.length > 0) {
-      const workerRows = manifest.workers
-        .filter(w => isValidUuid(w.worker_id))
-        .map(w => ({
-          manifest_id: finalManifestId,
-          worker_id: w.worker_id,
-          disembarked: w.disembarked ?? true,
-          notes: w.home_port || null
-        }));
-
-      if (workerRows.length > 0) {
-        await client.from('manifest_workers').upsert(workerRows, { onConflict: 'manifest_id,worker_id' });
+      for (const w of manifest.workers) {
+        if (isValidUuid(w.worker_id)) {
+          try {
+            await client.from('manifest_workers').upsert({
+              manifest_id: finalManifestId,
+              worker_id: w.worker_id,
+              disembarked: manifest.type === 'kedatangan'
+            }, { onConflict: 'manifest_id,worker_id' });
+          } catch (e) {
+            // Ignore individual worker relation issue
+          }
+        }
       }
     }
 
-    return { success: true, data: { id: finalManifestId } };
+    return { success: true, data: { ...payload, id: finalManifestId } };
   } catch (err: any) {
     console.error('dbInsertManifest error:', err);
     return { success: false, error: err.message };
   }
 }
 
-export async function dbInsertMobility(record: WorkerMobilityRecord): Promise<{ success: boolean; error?: string }> {
+export async function dbInsertMobility(rec: WorkerMobilityRecord): Promise<{ success: boolean; data?: any; error?: string }> {
   const client = getSupabaseClient();
   if (!client) return { success: false, error: 'No Supabase client' };
 
   try {
+    const id = isValidUuid(rec.id) ? rec.id : generateUUID();
     const payload: any = {
-      id: isValidUuid(record.id) ? record.id : generateUUID(),
-      worker_name: record.worker_name,
-      worker_nik_last4: record.worker_nik_last4,
-      from_vessel_name: record.from_vessel_name || null,
-      from_company_name: record.from_company_name || null,
-      to_vessel_name: record.to_vessel_name || null,
-      to_company_name: record.to_company_name || null,
-      transfer_date: record.transfer_date || new Date().toISOString(),
-      reason: record.reason || 'mutasi_armada',
-      clearance_status: record.clearance_status || 'disetujui',
-      notes: record.notes || null,
-      recorded_by_name: record.recorded_by_name || 'Admin'
+      worker_name: rec.worker_name,
+      worker_nik_last4: rec.worker_nik_last4,
+      from_vessel_name: rec.from_vessel_name,
+      from_company_name: rec.from_company_name,
+      to_vessel_name: rec.to_vessel_name,
+      to_company_name: rec.to_company_name,
+      transfer_date: rec.transfer_date || new Date().toISOString(),
+      reason: rec.reason || 'selesai_kontrak',
+      clearance_status: rec.clearance_status || 'disetujui',
+      notes: rec.notes || ''
     };
 
-    if (isValidUuid(record.worker_id)) payload.worker_id = record.worker_id;
-    if (isValidUuid(record.from_vessel_id)) payload.from_vessel_id = record.from_vessel_id;
-    if (isValidUuid(record.from_company_id)) payload.from_company_id = record.from_company_id;
-    if (isValidUuid(record.to_vessel_id)) payload.to_vessel_id = record.to_vessel_id;
-    if (isValidUuid(record.to_company_id)) payload.to_company_id = record.to_company_id;
+    if (isValidUuid(rec.worker_id)) payload.worker_id = rec.worker_id;
+    if (isValidUuid(rec.from_vessel_id)) payload.from_vessel_id = rec.from_vessel_id;
+    if (isValidUuid(rec.to_vessel_id)) payload.to_vessel_id = rec.to_vessel_id;
 
-    const { error } = await client.from('worker_mobility_records').insert(payload);
-    if (error) throw error;
-    return { success: true };
+    const { data, error } = await client
+      .from('worker_mobility_records')
+      .insert({ ...payload, id })
+      .select();
+
+    if (error) {
+      if (error.code === '23503') {
+        // Strip foreign keys if missing
+        delete payload.worker_id;
+        delete payload.from_vessel_id;
+        delete payload.to_vessel_id;
+        const { data: rData } = await client.from('worker_mobility_records').insert({ ...payload, id }).select();
+        return { success: true, data: rData && rData[0] };
+      }
+      throw error;
+    }
+    return { success: true, data: data && data[0] };
   } catch (err: any) {
     console.error('dbInsertMobility error:', err);
     return { success: false, error: err.message };
   }
 }
 
-export async function dbInsertDuplicateAlert(alert: CrewDuplicationAlert): Promise<{ success: boolean; error?: string }> {
+export async function dbInsertDuplicateAlert(alert: CrewDuplicationAlert): Promise<{ success: boolean; data?: any; error?: string }> {
   const client = getSupabaseClient();
   if (!client) return { success: false, error: 'No Supabase client' };
 
   try {
+    const id = isValidUuid(alert.id) ? alert.id : generateUUID();
     const payload: any = {
-      id: isValidUuid(alert.id) ? alert.id : generateUUID(),
       worker_name: alert.worker_name,
       worker_nik_last4: alert.worker_nik_last4,
-      worker_phone: alert.worker_phone || null,
+      worker_phone: alert.worker_phone || '',
       primary_vessel_name: alert.primary_vessel_name,
       primary_company_name: alert.primary_company_name,
       conflicting_vessel_name: alert.conflicting_vessel_name,
@@ -450,16 +723,29 @@ export async function dbInsertDuplicateAlert(alert: CrewDuplicationAlert): Promi
       conflict_type: alert.conflict_type || 'double_booking',
       detected_at: alert.detected_at || new Date().toISOString(),
       status: alert.status || 'aktif',
-      resolution_notes: alert.resolution_notes || null
+      resolution_notes: alert.resolution_notes || ''
     };
 
     if (isValidUuid(alert.worker_id)) payload.worker_id = alert.worker_id;
     if (isValidUuid(alert.primary_vessel_id)) payload.primary_vessel_id = alert.primary_vessel_id;
     if (isValidUuid(alert.conflicting_vessel_id)) payload.conflicting_vessel_id = alert.conflicting_vessel_id;
 
-    const { error } = await client.from('crew_duplication_alerts').insert(payload);
-    if (error) throw error;
-    return { success: true };
+    const { data, error } = await client
+      .from('crew_duplication_alerts')
+      .insert({ ...payload, id })
+      .select();
+
+    if (error) {
+      if (error.code === '23503') {
+        delete payload.worker_id;
+        delete payload.primary_vessel_id;
+        delete payload.conflicting_vessel_id;
+        const { data: rData } = await client.from('crew_duplication_alerts').insert({ ...payload, id }).select();
+        return { success: true, data: rData && rData[0] };
+      }
+      throw error;
+    }
+    return { success: true, data: data && data[0] };
   } catch (err: any) {
     console.error('dbInsertDuplicateAlert error:', err);
     return { success: false, error: err.message };
@@ -467,7 +753,7 @@ export async function dbInsertDuplicateAlert(alert: CrewDuplicationAlert): Promi
 }
 
 /**
- * Fetch all rows from Supabase with resilient per-table error handling
+ * Fetch all rows from Supabase with resilient per-table error handling & clear diagnostics
  */
 export async function fetchAllFromSupabase(): Promise<{
   companies?: Company[];
@@ -475,38 +761,55 @@ export async function fetchAllFromSupabase(): Promise<{
   workers?: Worker[];
   manifests?: Manifest[];
   alerts?: CrewDuplicationAlert[];
+  mobility?: WorkerMobilityRecord[];
   isRlsBlocked?: boolean;
+  tablesMissing?: string[];
+  errors?: Record<string, string>;
   error?: string;
 }> {
   const client = getSupabaseClient();
   if (!client) return { error: 'Supabase client not configured' };
 
   try {
-    // Jalankan setiap query secara independen agar jika satu tabel bermasalah (misal RLS / belum ada relasi), tabel lain tetap sukses dimuat
-    const [compRes, vessRes, workRes, manRes, alertRes] = await Promise.all([
-      client.from('companies').select('*').order('name').then(r => r, e => ({ data: [], error: e })),
-      client.from('vessels').select('*').order('name').then(r => r, e => ({ data: [], error: e })),
-      client.from('workers').select('*').order('created_at', { ascending: false }).then(r => r, e => ({ data: [], error: e })),
-      client.from('manifests').select('*').order('timestamp', { ascending: false }).then(r => r, e => ({ data: [], error: e })),
-      client.from('crew_duplication_alerts').select('*').order('detected_at', { ascending: false }).then(r => r, e => ({ data: [], error: e }))
+    const [compRes, vessRes, workRes, manRes, alertRes, mobRes] = await Promise.all([
+      client.from('companies').select('*').order('name'),
+      client.from('vessels').select('*').order('name'),
+      client.from('workers').select('*').order('created_at', { ascending: false }),
+      client.from('manifests').select('*').order('timestamp', { ascending: false }),
+      client.from('crew_duplication_alerts').select('*').order('detected_at', { ascending: false }),
+      client.from('worker_mobility_records').select('*').order('transfer_date', { ascending: false })
     ]);
 
     let isRlsBlocked = false;
-    const errors: string[] = [];
+    const tableErrors: Record<string, string> = {};
+    const tablesMissing: string[] = [];
 
-    [compRes, vessRes, workRes, manRes, alertRes].forEach(res => {
+    const checkTable = (tbl: string, res: any) => {
       if (res.error) {
-        if (res.error.code === '42501' || res.error.message?.toLowerCase().includes('row-level security') || res.error.message?.toLowerCase().includes('policy')) {
+        tableErrors[tbl] = res.error.message;
+        if (res.error.code === '42P01') {
+          tablesMissing.push(tbl);
+        }
+        if (res.error.code === '42501' || res.error.message.includes('row-level security')) {
           isRlsBlocked = true;
-        } else {
-          errors.push(res.error.message);
         }
       }
-    });
+    };
+
+    checkTable('companies', compRes);
+    checkTable('vessels', vessRes);
+    checkTable('workers', workRes);
+    checkTable('manifests', manRes);
+    checkTable('crew_duplication_alerts', alertRes);
+    checkTable('worker_mobility_records', mobRes);
+
+    const errMessages = Object.entries(tableErrors).map(([tbl, msg]) => `[${tbl}]: ${msg}`).join(', ');
 
     return {
       isRlsBlocked,
-      error: errors.length > 0 ? errors.join(', ') : undefined,
+      tablesMissing: tablesMissing.length > 0 ? tablesMissing : undefined,
+      errors: Object.keys(tableErrors).length > 0 ? tableErrors : undefined,
+      error: errMessages.length > 0 ? errMessages : undefined,
       companies: (compRes.data || []).map((c: any) => ({
         id: c.id,
         name: c.name,
@@ -598,6 +901,23 @@ export async function fetchAllFromSupabase(): Promise<{
         detected_at: a.detected_at,
         status: a.status || 'aktif',
         resolution_notes: a.resolution_notes || ''
+      })),
+      mobility: (mobRes.data || []).map((m: any) => ({
+        id: m.id,
+        worker_id: m.worker_id || '',
+        worker_name: m.worker_name,
+        worker_nik_last4: m.worker_nik_last4,
+        from_vessel_id: m.from_vessel_id || '',
+        from_vessel_name: m.from_vessel_name,
+        from_company_name: m.from_company_name,
+        to_vessel_id: m.to_vessel_id || '',
+        to_vessel_name: m.to_vessel_name,
+        to_company_name: m.to_company_name,
+        transfer_date: m.transfer_date,
+        reason: m.reason || 'selesai_kontrak',
+        clearance_status: m.clearance_status || 'disetujui',
+        recorded_by_name: m.recorded_by_name || 'Petugas Syahbandar',
+        notes: m.notes || ''
       }))
     };
   } catch (err: any) {
@@ -618,6 +938,7 @@ export function setupSupabaseRealtime(onDataChanged: (table: string, payload: an
   if (activeRealtimeChannel) {
     try {
       client.removeChannel(activeRealtimeChannel);
+      activeRealtimeChannel = null;
     } catch (e) {
       // ignore
     }
@@ -674,8 +995,11 @@ export function setupSupabaseRealtime(onDataChanged: (table: string, payload: an
           onDataChanged('worker_mobility_records', payload);
         }
       )
-      .subscribe((status) => {
+      .subscribe((status, err) => {
         console.info('[Realtime] Status koneksi channel Supabase:', status);
+        if (status === 'CHANNEL_ERROR') {
+          console.warn('[Realtime] Saluran Realtime terputus, sistem menggunakan polling otomatis:', err);
+        }
       });
 
     activeRealtimeChannel = channel;

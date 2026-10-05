@@ -181,6 +181,9 @@ export class DataStore {
   private isSupabaseSyncing: boolean = false;
   private isRlsBlocked: boolean = false;
   private isInitialized: boolean = false;
+  private isPushingLocal: boolean = false;
+  private tablesMissing: string[] = [];
+  private lastSyncError: string | undefined = undefined;
 
   constructor() {
     this.init();
@@ -207,8 +210,71 @@ export class DataStore {
     return this.isRlsBlocked;
   }
 
+  public getTablesMissing(): string[] {
+    return this.tablesMissing;
+  }
+
+  public getIsPushingLocal(): boolean {
+    return this.isPushingLocal;
+  }
+
   public getIsInitialized(): boolean {
     return this.isInitialized;
+  }
+
+  public getLastSyncError(): string | undefined {
+    return this.lastSyncError;
+  }
+
+  public exportDataJson(): string {
+    return JSON.stringify({
+      companies: this.companies,
+      vessels: this.vessels,
+      workers: this.workers,
+      manifests: this.manifests,
+      duplicateAlerts: this.duplicateAlerts,
+      mobilityRecords: this.mobilityRecords,
+      exportedAt: new Date().toISOString()
+    }, null, 2);
+  }
+
+  public async importDataJson(jsonStr: string): Promise<{ success: boolean; count?: number; error?: string }> {
+    try {
+      const data = JSON.parse(jsonStr);
+      if (!data || (!data.workers && !data.vessels && !data.companies)) {
+        return { success: false, error: 'Format JSON tidak valid atau data kosong.' };
+      }
+
+      if (Array.isArray(data.companies) && data.companies.length > 0) {
+        this.companies = data.companies;
+        this.saveCompanies();
+      }
+      if (Array.isArray(data.vessels) && data.vessels.length > 0) {
+        this.vessels = data.vessels;
+        this.saveVessels();
+      }
+      if (Array.isArray(data.workers) && data.workers.length > 0) {
+        this.workers = data.workers;
+        this.saveWorkers();
+      }
+      if (Array.isArray(data.manifests) && data.manifests.length > 0) {
+        this.manifests = data.manifests;
+        this.saveManifests();
+      }
+
+      this.notifyListeners();
+      this.broadcastChange();
+
+      // Langsung unggah data yang diimpor ke Cloud Supabase
+      await this.pushLocalDataToSupabase();
+
+      return { 
+        success: true, 
+        count: (data.workers?.length || 0) 
+      };
+    } catch (e: any) {
+      return { success: false, error: 'Gagal memproses data: ' + e?.message };
+    }
   }
 
   private setupCrossTabSync(): void {
@@ -258,11 +324,11 @@ export class DataStore {
   }
 
   private startSyncTimers(): void {
-    // Polling background setiap 10 detik sebagai proteksi jika koneksi websocket gadget mobile sempat sleep
+    // Polling background setiap 5 detik sebagai proteksi jika websocket gadget mobile sleep
     if (typeof window !== 'undefined') {
       setInterval(() => {
         this.refreshFromSupabase(true);
-      }, 10000);
+      }, 5000);
 
       window.addEventListener('focus', () => {
         this.refreshFromSupabase(true);
@@ -342,16 +408,32 @@ export class DataStore {
    * Menjamin bahwa seluruh data yang pernah tersimpan lokal di gadget ini (ABK, Armada, Perusahaan)
    * otomatis di-upload ke Supabase Cloud sehingga gadget lain langsung bisa melihatnya.
    */
-  public async pushLocalDataToSupabase(): Promise<void> {
+  public async pushLocalDataToSupabase(): Promise<{ 
+    success: boolean; 
+    pushedWorkers: number; 
+    pushedVessels: number; 
+    pushedCompanies: number; 
+    message: string;
+    error?: string;
+  }> {
     const client = getSupabaseClient();
-    if (!client) return;
+    if (!client) return { success: false, pushedWorkers: 0, pushedVessels: 0, pushedCompanies: 0, message: 'Client Supabase belum siap' };
 
+    this.isPushingLocal = true;
+    this.notifyListeners();
+
+    let workerSuccess = 0;
+    let vesselSuccess = 0;
+    let companySuccess = 0;
     try {
       // 1. Sync Companies
       for (const comp of this.companies) {
         const res = await dbInsertCompany(comp);
-        if (res.success && res.data?.id && res.data.id !== comp.id) {
-          comp.id = res.data.id;
+        if (res.success) {
+          companySuccess++;
+          if (res.data?.id && res.data.id !== comp.id) {
+            comp.id = res.data.id;
+          }
         }
       }
       this.saveCompanies();
@@ -359,8 +441,11 @@ export class DataStore {
       // 2. Sync Vessels
       for (const vess of this.vessels) {
         const res = await dbInsertVessel(vess);
-        if (res.success && res.data?.id && res.data.id !== vess.id) {
-          vess.id = res.data.id;
+        if (res.success) {
+          vesselSuccess++;
+          if (res.data?.id && res.data.id !== vess.id) {
+            vess.id = res.data.id;
+          }
         }
       }
       this.saveVessels();
@@ -368,70 +453,112 @@ export class DataStore {
       // 3. Sync Workers
       for (const w of this.workers) {
         const res = await dbInsertWorker(w);
-        if (res.success && res.data?.id && res.data.id !== w.id) {
-          w.id = res.data.id;
+        if (res.success) {
+          workerSuccess++;
+          if (res.data?.id && res.data.id !== w.id) {
+            w.id = res.data.id;
+          }
         }
       }
       this.saveWorkers();
 
+      this.isPushingLocal = false;
       this.notifyListeners();
-    } catch (e) {
+      this.broadcastChange();
+
+      return {
+        success: true,
+        pushedWorkers: workerSuccess,
+        pushedVessels: vesselSuccess,
+        pushedCompanies: companySuccess,
+        message: `Berhasil mengunggah ${workerSuccess} pekerja ABK, ${vesselSuccess} armada kapal, dan ${companySuccess} perusahaan ke Cloud Supabase.`
+      };
+    } catch (e: any) {
+      this.isPushingLocal = false;
+      this.notifyListeners();
       console.warn('pushLocalDataToSupabase error:', e);
+      return { 
+        success: false, 
+        pushedWorkers: workerSuccess, 
+        pushedVessels: vesselSuccess, 
+        pushedCompanies: companySuccess, 
+        message: e?.message || 'Gagal sinkronisasi data lokal ke Cloud.',
+        error: e?.message 
+      };
     }
   }
 
   /**
    * Mengambil dan memperbarui data riil langsung dari Cloud Supabase
    */
-  public async refreshFromSupabase(silent = false): Promise<{ success: boolean; message: string }> {
+  public async refreshFromSupabase(silent = false): Promise<{ success: boolean; message: string; isRlsBlocked?: boolean; error?: string }> {
     if (this.isSupabaseSyncing) return { success: false, message: "Sinkronisasi sedang berlangsung..." };
     this.isSupabaseSyncing = true;
 
     try {
       const res = await fetchAllFromSupabase();
-      if (res.isRlsBlocked) {
-        this.isRlsBlocked = true;
-      } else {
-        this.isRlsBlocked = false;
-      }
+      this.isRlsBlocked = !!res.isRlsBlocked;
+      this.tablesMissing = res.tablesMissing || [];
+      this.lastSyncError = res.error;
 
-      if (res.error && !res.companies && !res.workers && !res.vessels) {
-        this.isSupabaseSyncing = false;
-        if (!silent) this.notifyListeners();
-        return { success: false, message: res.error };
-      }
-
+      // Handle table updates & smart merge
       if (res.companies && Array.isArray(res.companies)) {
-        if (res.companies.length > 0 || this.companies.length === 0) {
-          this.companies = res.companies;
+        if (res.companies.length > 0) {
+          const cloudCodes = new Set(res.companies.map(c => c.code));
+          const localOnly = this.companies.filter(c => !cloudCodes.has(c.code));
+          this.companies = [...res.companies, ...localOnly];
           this.saveCompanies();
         }
       }
+
       if (res.vessels && Array.isArray(res.vessels)) {
-        if (res.vessels.length > 0 || this.vessels.length === 0) {
-          this.vessels = res.vessels;
+        if (res.vessels.length > 0) {
+          const cloudRegs = new Set(res.vessels.map(v => v.registration_number));
+          const localOnly = this.vessels.filter(v => !cloudRegs.has(v.registration_number));
+          this.vessels = [...res.vessels, ...localOnly];
           this.saveVessels();
         }
       }
+
       if (res.workers && Array.isArray(res.workers)) {
-        if (res.workers.length > 0 || this.workers.length === 0) {
-          this.workers = res.workers;
+        if (res.workers.length > 0) {
+          const cloudHashes = new Set(res.workers.map(w => w.nik_hash));
+          const localOnly = this.workers.filter(w => !cloudHashes.has(w.nik_hash));
+          this.workers = [...res.workers, ...localOnly];
           this.saveWorkers();
         }
       }
+
       if (res.manifests && Array.isArray(res.manifests)) {
-        if (res.manifests.length > 0 || this.manifests.length === 0) {
+        if (res.manifests.length > 0) {
           this.manifests = res.manifests;
           this.saveManifests();
         }
       }
+
       if (res.alerts && Array.isArray(res.alerts)) {
         this.duplicateAlerts = res.alerts;
         this.saveDuplicates();
       }
 
+      if (res.mobility && Array.isArray(res.mobility)) {
+        if (res.mobility.length > 0) {
+          this.mobilityRecords = res.mobility;
+          this.saveMobility();
+        }
+      }
+
       this.isSupabaseSyncing = false;
       this.notifyListeners();
+
+      if (res.error) {
+        return {
+          success: false,
+          isRlsBlocked: this.isRlsBlocked,
+          error: res.error,
+          message: `Koneksi Supabase: ${res.error}`
+        };
+      }
 
       return { 
         success: true, 
@@ -439,6 +566,7 @@ export class DataStore {
       };
     } catch (e: any) {
       this.isSupabaseSyncing = false;
+      this.lastSyncError = e?.message;
       return { success: false, message: e?.message || "Gagal terhubung ke Supabase" };
     }
   }
@@ -604,17 +732,24 @@ export class DataStore {
 
     this.workers.unshift(newWorker);
     this.saveWorkers();
-    this.notifyListeners();
-    this.broadcastChange();
 
-    // Simpan otomatis ke Supabase Cloud
-    dbInsertWorker(newWorker).then((res) => {
+    // Simpan otomatis ke Supabase Cloud (await agar sinkronisasi langsung terverifikasi)
+    try {
+      const res = await dbInsertWorker(newWorker);
       if (res.success && res.data?.id && res.data.id !== newWorker.id) {
         newWorker.id = res.data.id;
         this.saveWorkers();
-        this.notifyListeners();
       }
-    }).catch(err => console.warn('Supabase sync worker:', err));
+      if (!res.success && res.error) {
+        this.lastSyncError = res.error;
+      }
+    } catch (err: any) {
+      console.warn('Supabase sync worker:', err);
+      this.lastSyncError = err?.message;
+    }
+
+    this.notifyListeners();
+    this.broadcastChange();
 
     return { success: true, worker: newWorker };
   }

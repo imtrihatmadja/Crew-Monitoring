@@ -297,14 +297,32 @@ FOR EACH ROW
 EXECUTE FUNCTION update_worker_status_from_manifest();
 
 -- ==============================================================================
--- 13. HAK AKSES & ROW LEVEL SECURITY (RLS) SUPABASE
+-- 13. HAK AKSES, ROW LEVEL SECURITY (RLS) & REALTIME SUPABASE
 -- Memberikan hak akses penuh ke role anon & authenticated agar sistem web
--- dapat langsung membaca dan menyimpan data secara otomatis tanpa error 42501
+-- dapat langsung membaca dan menyimpan data secara otomatis di semua gadget
 -- ==============================================================================
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated;
 
+-- Pastikan kolom-kolom baru tersedia jika tabel sudah pernah dibuat sebelumnya
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_start_date DATE;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_expiry_date DATE;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_company_name VARCHAR(255);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_status VARCHAR(50) DEFAULT 'belum_ada';
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS previous_company_name VARCHAR(255);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS bst_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS seaman_book_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS mcu_status VARCHAR(50) DEFAULT 'layak';
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS bpjs_tk_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS bpjs_tk_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS clearance_status VARCHAR(50) DEFAULT 'bebas_tanggungan';
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS tanggungan_category VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS tanggungan_amount NUMERIC DEFAULT 0;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS tanggungan_notes TEXT;
+
+-- Nonaktifkan RLS agar dapat diakses tanpa hambatan 42501
 ALTER TABLE IF EXISTS companies DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS vessels DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS workers DISABLE ROW LEVEL SECURITY;
@@ -314,6 +332,32 @@ ALTER TABLE IF EXISTS checkin_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_mobility_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS crew_duplication_alerts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_complaints DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS clearance_records DISABLE ROW LEVEL SECURITY;
+
+-- Buat Kebijakan Akses Terbuka (Sebagai jaminan cadangan jika RLS dipaksa aktif oleh setting Supabase)
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Public Access companies" ON companies;
+  CREATE POLICY "Public Access companies" ON companies FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+  
+  DROP POLICY IF EXISTS "Public Access vessels" ON vessels;
+  CREATE POLICY "Public Access vessels" ON vessels FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+  
+  DROP POLICY IF EXISTS "Public Access workers" ON workers;
+  CREATE POLICY "Public Access workers" ON workers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access manifests" ON manifests;
+  CREATE POLICY "Public Access manifests" ON manifests FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access checkin_events" ON checkin_events;
+  CREATE POLICY "Public Access checkin_events" ON checkin_events FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access worker_mobility_records" ON worker_mobility_records;
+  CREATE POLICY "Public Access worker_mobility_records" ON worker_mobility_records FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access crew_duplication_alerts" ON crew_duplication_alerts;
+  CREATE POLICY "Public Access crew_duplication_alerts" ON crew_duplication_alerts FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN null;
+END $$;
 
 -- AKTIFKAN SUPABASE REALTIME BROADCAST (SUPAYA DATA MUNCUL REALTIME DI SEMUA GADGET)
 DO $$ BEGIN
@@ -335,6 +379,24 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated;
 
+-- Pastikan kolom-kolom baru tersedia jika tabel dibuat di versi sebelumnya
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_start_date DATE;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_expiry_date DATE;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_company_name VARCHAR(255);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS pkl_status VARCHAR(50) DEFAULT 'belum_ada';
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS previous_company_name VARCHAR(255);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS bst_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS seaman_book_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS mcu_status VARCHAR(50) DEFAULT 'layak';
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS bpjs_tk_number VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS bpjs_tk_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS clearance_status VARCHAR(50) DEFAULT 'bebas_tanggungan';
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS tanggungan_category VARCHAR(100);
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS tanggungan_amount NUMERIC DEFAULT 0;
+ALTER TABLE IF EXISTS workers ADD COLUMN IF NOT EXISTS tanggungan_notes TEXT;
+
+-- Nonaktifkan Row Level Security
 ALTER TABLE IF EXISTS companies DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS vessels DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS workers DISABLE ROW LEVEL SECURITY;
@@ -344,6 +406,32 @@ ALTER TABLE IF EXISTS checkin_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_mobility_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS crew_duplication_alerts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_complaints DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS clearance_records DISABLE ROW LEVEL SECURITY;
+
+-- Tambahkan Kebijakan Izin Terbuka (Supaya tetap bisa diakses meskipun RLS aktif di setting project)
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Public Access companies" ON companies;
+  CREATE POLICY "Public Access companies" ON companies FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+  
+  DROP POLICY IF EXISTS "Public Access vessels" ON vessels;
+  CREATE POLICY "Public Access vessels" ON vessels FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+  
+  DROP POLICY IF EXISTS "Public Access workers" ON workers;
+  CREATE POLICY "Public Access workers" ON workers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access manifests" ON manifests;
+  CREATE POLICY "Public Access manifests" ON manifests FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access checkin_events" ON checkin_events;
+  CREATE POLICY "Public Access checkin_events" ON checkin_events FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access worker_mobility_records" ON worker_mobility_records;
+  CREATE POLICY "Public Access worker_mobility_records" ON worker_mobility_records FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+  DROP POLICY IF EXISTS "Public Access crew_duplication_alerts" ON crew_duplication_alerts;
+  CREATE POLICY "Public Access crew_duplication_alerts" ON crew_duplication_alerts FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN null;
+END $$;
 
 -- Aktifkan Realtime Broadcast di seluruh gadget
 DO $$ BEGIN

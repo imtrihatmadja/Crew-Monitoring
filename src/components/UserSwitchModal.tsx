@@ -37,7 +37,12 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isCleaning, setIsCleaning] = useState(false);
   const [copiedRls, setCopiedRls] = useState(false);
-  const [connStatus, setConnStatus] = useState<{ latency?: number; isRlsBlocked?: boolean }>({});
+  const [connStatus, setConnStatus] = useState<{ 
+    latency?: number; 
+    isRlsBlocked?: boolean; 
+    workerCount?: number; 
+    tablesMissing?: string[] 
+  }>({});
   const [optimizeMsg, setOptimizeMsg] = useState('');
 
   useEffect(() => {
@@ -45,7 +50,9 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
       testSupabaseConnection().then(res => {
         setConnStatus({
           latency: res.latencyMs,
-          isRlsBlocked: res.isRlsBlocked
+          isRlsBlocked: res.isRlsBlocked,
+          workerCount: res.workerCount,
+          tablesMissing: res.tablesMissing
         });
       });
     }
@@ -57,16 +64,37 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
     setIsSyncing(true);
     setSyncResult(null);
     try {
-      await store.pushLocalDataToSupabase();
       const res = await store.refreshFromSupabase(false);
       setSyncResult(res);
       const testRes = await testSupabaseConnection();
       setConnStatus({
         latency: testRes.latencyMs,
-        isRlsBlocked: testRes.isRlsBlocked
+        isRlsBlocked: testRes.isRlsBlocked,
+        workerCount: testRes.workerCount,
+        tablesMissing: testRes.tablesMissing
       });
     } catch (e: any) {
       setSyncResult({ success: false, message: e?.message || 'Gagal sinkronisasi data cloud.' });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handlePushLocal = async () => {
+    setIsSyncing(true);
+    setSyncResult(null);
+    try {
+      const pushRes = await store.pushLocalDataToSupabase();
+      setSyncResult({ success: pushRes.success, message: pushRes.message });
+      const testRes = await testSupabaseConnection();
+      setConnStatus({
+        latency: testRes.latencyMs,
+        isRlsBlocked: testRes.isRlsBlocked,
+        workerCount: testRes.workerCount,
+        tablesMissing: testRes.tablesMissing
+      });
+    } catch (e: any) {
+      setSyncResult({ success: false, message: e?.message || 'Gagal mengunggah data lokal.' });
     } finally {
       setIsSyncing(false);
     }
@@ -244,16 +272,41 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
               </div>
             )}
 
+            {/* Tables Missing Warning if any */}
+            {connStatus.tablesMissing && connStatus.tablesMissing.length > 0 && (
+              <div className="p-2.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300 space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-rose-900">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Tabel Belum Dibuat di Supabase</span>
+                </div>
+                <p className="text-[11px] text-rose-700 font-normal">
+                  Tabel <code>{connStatus.tablesMissing.join(', ')}</code> belum dibuat. Buka tombol "Supabase DDL & RLS" di atas dan jalankan skrip SQL.
+                </p>
+              </div>
+            )}
+
             {/* Action Buttons */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handlePushLocal}
+                disabled={isSyncing}
+                className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+                title="Unggah semua data yang ada di gadget ini ke Cloud Supabase agar gadget lain langsung melihatnya"
+              >
+                <Zap className={`w-3.5 h-3.5 ${isSyncing ? 'animate-bounce' : ''}`} />
+                {isSyncing ? 'Memproses...' : 'Upload Lokal ke Cloud'}
+              </button>
+
               <button
                 type="button"
                 onClick={handleManualSync}
                 disabled={isSyncing}
                 className="py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+                title="Tarik data terbaru dari server Supabase ke gadget ini"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                {isSyncing ? 'Menyinkronkan...' : 'Tarik & Sinkronkan Data'}
+                {isSyncing ? 'Menyinkronkan...' : 'Tarik dari Cloud'}
               </button>
 
               <button

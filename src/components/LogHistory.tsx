@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProfile, CheckinEvent } from '../types';
 import { store, INDONESIAN_PORTS } from '../lib/supabaseStore';
 import { Clock, Search, Filter, ArrowUpRight, ArrowDownLeft, Lock, FileSpreadsheet, Anchor } from 'lucide-react';
@@ -8,6 +8,14 @@ interface LogHistoryProps {
 }
 
 export const LogHistory: React.FC<LogHistoryProps> = ({ currentUser }) => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      setTick(t => t + 1);
+    });
+  }, []);
+
   const allEvents = store.getEvents();
 
   const [searchQuery, setSearchQuery] = useState('');

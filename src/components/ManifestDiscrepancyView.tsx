@@ -1,9 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { store } from '../lib/supabaseStore';
 import { ManifestDiscrepancy } from '../types';
 import { AlertOctagon, Ship, Anchor, CheckCircle2, XCircle, Search, ShieldAlert, Lock, UserCheck, MessageSquare } from 'lucide-react';
 
 export const ManifestDiscrepancyView: React.FC = () => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      setTick(t => t + 1);
+    });
+  }, []);
+
   const currentUser = store.getCurrentUser();
   const discrepancies = store.getDiscrepancies();
   const vessels = store.getVessels();

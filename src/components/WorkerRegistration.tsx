@@ -276,6 +276,13 @@ export const WorkerRegistration: React.FC<WorkerRegistrationProps> = ({
       }
     }
 
+    // Pastikan seluruh data batch terunggah ke Cloud Supabase
+    try {
+      await store.pushLocalDataToSupabase();
+    } catch (e) {
+      console.warn('Bulk push sync notice:', e);
+    }
+
     setBulkImportLoading(false);
     setBulkSuccessMsg(
       `Berhasil mengimpor ${successCount} dari ${validRows.length} pekerja awak kapal! Seluruh NIK telah di-hash SHA-256 secara otomatis sesuai UU PDP.`

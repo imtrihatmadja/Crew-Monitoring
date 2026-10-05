@@ -16,6 +16,18 @@ export const LogCheckin: React.FC<LogCheckinProps> = ({
   onEventLogged,
   onCancel
 }) => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      setTick(t => t + 1);
+      const wList = store.getWorkers();
+      const vList = store.getVessels();
+      setSelectedWorkerId(prev => (!prev && wList.length > 0 ? wList[0].id : prev));
+      setSelectedVesselId(prev => (!prev && vList.length > 0 ? vList[0].id : prev));
+    });
+  }, []);
+
   const workers = store.getWorkers();
   const vessels = store.getVessels();
 
