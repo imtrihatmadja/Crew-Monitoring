@@ -497,17 +497,29 @@ export class DataStore {
 
     try {
       const res = await fetchAllFromSupabase();
+      let hasChanged = false;
+      const prevRls = this.isRlsBlocked;
+      const prevMissing = this.tablesMissing.join(',');
+
       this.isRlsBlocked = !!res.isRlsBlocked;
       this.tablesMissing = res.tablesMissing || [];
       this.lastSyncError = res.error;
+
+      if (this.isRlsBlocked !== prevRls || this.tablesMissing.join(',') !== prevMissing) {
+        hasChanged = true;
+      }
 
       // Handle table updates & smart merge
       if (res.companies && Array.isArray(res.companies)) {
         if (res.companies.length > 0) {
           const cloudCodes = new Set(res.companies.map(c => c.code));
           const localOnly = this.companies.filter(c => !cloudCodes.has(c.code));
-          this.companies = [...res.companies, ...localOnly];
-          this.saveCompanies();
+          const merged = [...res.companies, ...localOnly];
+          if (merged.length !== this.companies.length || merged.some((c, i) => c.id !== this.companies[i]?.id)) {
+            this.companies = merged;
+            this.saveCompanies();
+            hasChanged = true;
+          }
         }
       }
 
@@ -515,8 +527,12 @@ export class DataStore {
         if (res.vessels.length > 0) {
           const cloudRegs = new Set(res.vessels.map(v => v.registration_number));
           const localOnly = this.vessels.filter(v => !cloudRegs.has(v.registration_number));
-          this.vessels = [...res.vessels, ...localOnly];
-          this.saveVessels();
+          const merged = [...res.vessels, ...localOnly];
+          if (merged.length !== this.vessels.length || merged.some((v, i) => v.id !== this.vessels[i]?.id)) {
+            this.vessels = merged;
+            this.saveVessels();
+            hasChanged = true;
+          }
         }
       }
 
@@ -524,32 +540,47 @@ export class DataStore {
         if (res.workers.length > 0) {
           const cloudHashes = new Set(res.workers.map(w => w.nik_hash));
           const localOnly = this.workers.filter(w => !cloudHashes.has(w.nik_hash));
-          this.workers = [...res.workers, ...localOnly];
-          this.saveWorkers();
+          const merged = [...res.workers, ...localOnly];
+          if (merged.length !== this.workers.length || merged.some((w, i) => w.id !== this.workers[i]?.id)) {
+            this.workers = merged;
+            this.saveWorkers();
+            hasChanged = true;
+          }
         }
       }
 
       if (res.manifests && Array.isArray(res.manifests)) {
         if (res.manifests.length > 0) {
-          this.manifests = res.manifests;
-          this.saveManifests();
+          if (res.manifests.length !== this.manifests.length || res.manifests.some((m, i) => m.id !== this.manifests[i]?.id)) {
+            this.manifests = res.manifests;
+            this.saveManifests();
+            hasChanged = true;
+          }
         }
       }
 
       if (res.alerts && Array.isArray(res.alerts)) {
-        this.duplicateAlerts = res.alerts;
-        this.saveDuplicates();
+        if (res.alerts.length !== this.duplicateAlerts.length || res.alerts.some((a, i) => a.id !== this.duplicateAlerts[i]?.id || a.status !== this.duplicateAlerts[i]?.status)) {
+          this.duplicateAlerts = res.alerts;
+          this.saveDuplicates();
+          hasChanged = true;
+        }
       }
 
       if (res.mobility && Array.isArray(res.mobility)) {
         if (res.mobility.length > 0) {
-          this.mobilityRecords = res.mobility;
-          this.saveMobility();
+          if (res.mobility.length !== this.mobilityRecords.length || res.mobility.some((m, i) => m.id !== this.mobilityRecords[i]?.id)) {
+            this.mobilityRecords = res.mobility;
+            this.saveMobility();
+            hasChanged = true;
+          }
         }
       }
 
       this.isSupabaseSyncing = false;
-      this.notifyListeners();
+      if (hasChanged || !silent) {
+        this.notifyListeners();
+      }
 
       if (res.error) {
         return {

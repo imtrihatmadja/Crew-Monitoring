@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile, Worker } from '../types';
 import { store, INDONESIAN_PORTS } from '../lib/supabaseStore';
 import { validateNikFormat, formatMaskedDisplay } from '../lib/hash';
@@ -30,12 +30,54 @@ export const WorkerRegistration: React.FC<WorkerRegistrationProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'single' | 'bulk'>('single');
 
-  // Single Registration Form State
-  const [name, setName] = useState('');
-  const [nikRaw, setNikRaw] = useState('');
-  const [dob, setDob] = useState('');
-  const [phone, setPhone] = useState('');
-  const [homePort, setHomePort] = useState(currentUser.port || INDONESIAN_PORTS[0]);
+  const DRAFT_KEY = 'abk_worker_reg_draft_v1';
+
+  // Single Registration Form State with safe draft recovery
+  const [name, setName] = useState(() => {
+    try {
+      const d = sessionStorage.getItem(DRAFT_KEY);
+      return d ? JSON.parse(d).name || '' : '';
+    } catch { return ''; }
+  });
+  const [nikRaw, setNikRaw] = useState(() => {
+    try {
+      const d = sessionStorage.getItem(DRAFT_KEY);
+      return d ? JSON.parse(d).nikRaw || '' : '';
+    } catch { return ''; }
+  });
+  const [dob, setDob] = useState(() => {
+    try {
+      const d = sessionStorage.getItem(DRAFT_KEY);
+      return d ? JSON.parse(d).dob || '' : '';
+    } catch { return ''; }
+  });
+  const [phone, setPhone] = useState(() => {
+    try {
+      const d = sessionStorage.getItem(DRAFT_KEY);
+      return d ? JSON.parse(d).phone || '' : '';
+    } catch { return ''; }
+  });
+  const [homePort, setHomePort] = useState(() => {
+    try {
+      const d = sessionStorage.getItem(DRAFT_KEY);
+      return d ? JSON.parse(d).homePort || (currentUser.port || INDONESIAN_PORTS[0]) : (currentUser.port || INDONESIAN_PORTS[0]);
+    } catch { return currentUser.port || INDONESIAN_PORTS[0]; }
+  });
+
+  // Auto-save form draft so user typing is never lost
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        name,
+        nikRaw,
+        dob,
+        phone,
+        homePort
+      }));
+    } catch (e) {
+      // ignore
+    }
+  }, [name, nikRaw, dob, phone, homePort]);
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -98,7 +140,12 @@ export const WorkerRegistration: React.FC<WorkerRegistrationProps> = ({
       if (res.success && res.worker) {
         setSuccessWorker(res.worker);
         onWorkerRegistered(res.worker);
-        // Reset form
+        // Reset form & hapus draft
+        try {
+          sessionStorage.removeItem(DRAFT_KEY);
+        } catch (e) {
+          // ignore
+        }
         setName('');
         setNikRaw('');
         setDob('');
