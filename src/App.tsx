@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile, Worker, NavTab } from './types';
-import { store } from './lib/supabaseStore';
+import { store, useStoreVersion } from './lib/supabaseStore';
 import { Navbar } from './components/Navbar';
 import { Dashboard } from './components/Dashboard';
 import { ManifestLog } from './components/ManifestLog';
@@ -14,15 +14,26 @@ import { LogHistory } from './components/LogHistory';
 import { SqlSchemaModal } from './components/SqlSchemaModal';
 import { UserSwitchModal } from './components/UserSwitchModal';
 import { WorkerDetailModal } from './components/WorkerDetailModal';
-import { Users, UserCheck } from 'lucide-react';
+import { Users, UserCheck, ShieldAlert, Copy, Check } from 'lucide-react';
+import { SQL_RLS_FIX } from './lib/sqlSchema';
 
 export default function App() {
+  const storeVersion = useStoreVersion();
   const [currentUser, setCurrentUser] = useState<UserProfile>(store.getCurrentUser());
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [copiedRls, setCopiedRls] = useState(false);
 
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
   const [selectedWorkerForModal, setSelectedWorkerForModal] = useState<Worker | null>(null);
+
+  const isRlsBlocked = store.getIsRlsBlocked();
+
+  const handleCopyRlsFix = () => {
+    navigator.clipboard.writeText(SQL_RLS_FIX);
+    setCopiedRls(true);
+    setTimeout(() => setCopiedRls(false), 2500);
+  };
 
   const handleSelectUser = (user: UserProfile) => {
     store.setCurrentUser(user);
@@ -44,6 +55,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-blue-500 selection:text-white">
       {/* Top Navbar */}
       <Navbar
+        key={`navbar-${storeVersion}`}
         currentUser={currentUser}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -51,8 +63,44 @@ export default function App() {
         onOpenSqlModal={() => setIsSqlModalOpen(true)}
       />
 
+      {/* RLS Policy Warning Banner if Blocked by Supabase */}
+      {isRlsBlocked && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-medium border-b border-amber-600 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 shrink-0 text-slate-950" />
+            <span>
+              <strong>Perhatian Supabase:</strong> Fitur Row-Level Security (RLS) di Supabase masih membatasi akses multi-device. Jalankan skrip 1-klik di SQL Editor Supabase agar semua gadget dapat membaca dan menulis data secara bersamaan.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleCopyRlsFix}
+              className="bg-slate-950 hover:bg-slate-900 text-white font-bold px-3 py-1 rounded text-xs transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              {copiedRls ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Skrip SQL Tersalin!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Salin Skrip Buka Akses RLS</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setIsSqlModalOpen(true)}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-2.5 py-1 rounded text-xs transition"
+            >
+              Lihat Detail
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6" key={`view-${storeVersion}`}>
         {/* Dashboard View */}
         {activeTab === 'dashboard' && (
           <Dashboard

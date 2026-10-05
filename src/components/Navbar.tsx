@@ -34,6 +34,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isWorkerDropdownOpen, setIsWorkerDropdownOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      setTick(t => t + 1);
+    });
+  }, []);
 
   const duplicateAlerts = store.getDuplicateAlerts().filter(a => a.status === 'aktif');
   const highMobilityCount = store.getMetrics().highMobilityCount;
@@ -256,11 +263,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onOpenUserModal}
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs font-semibold cursor-pointer transition"
-              title="Database Cloud Supabase Terhubung Otomatis - Klik untuk status & sinkronisasi"
+              title="Database Cloud Supabase Terhubung Otomatis & Real-Time di Semua Gadget - Klik untuk status & sinkronisasi"
             >
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span className="hidden sm:inline">Supabase</span>
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1 rounded font-mono">ONLINE</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-bold">REALTIME</span>
             </button>
 
             {/* User Profile & Company Switcher */}

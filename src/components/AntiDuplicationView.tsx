@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { store } from '../lib/supabaseStore';
 import { CrewDuplicationAlert, Company, UserProfile } from '../types';
 import { 
@@ -32,7 +32,15 @@ export const AntiDuplicationView: React.FC<AntiDuplicationViewProps> = ({
   onNavigateToWorkerDetail
 }) => {
   const [alerts, setAlerts] = useState<CrewDuplicationAlert[]>(store.getDuplicateAlerts());
-  const [companies] = useState<Company[]>(store.getCompanies());
+  const [companies, setCompanies] = useState<Company[]>(store.getCompanies());
+
+  // Subscribe to real-time store updates across all devices
+  useEffect(() => {
+    return store.subscribe(() => {
+      setAlerts(store.getDuplicateAlerts());
+      setCompanies(store.getCompanies());
+    });
+  }, []);
   const [selectedContactCompany, setSelectedContactCompany] = useState<Company | null>(null);
   const [resolvingAlert, setResolvingAlert] = useState<CrewDuplicationAlert | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState('');

@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { 
   Worker, 
   Vessel, 
@@ -22,7 +23,10 @@ import {
   dbInsertManifest,
   dbInsertMobility,
   dbInsertDuplicateAlert,
-  fetchAllFromSupabase
+  fetchAllFromSupabase,
+  generateUUID,
+  isValidUuid,
+  setupSupabaseRealtime
 } from './supabaseClient';
 
 // Akun Pengujian Akses (Role-Based Access Control)
@@ -170,104 +174,270 @@ export class DataStore {
   private clearanceRecords: ClearanceRecord[] = [];
   private currentUser: UserProfile = DEMO_USERS[0];
 
+  // Reactive listeners for React components
+  private listeners: Set<() => void> = new Set();
+  private crossTabChannel: BroadcastChannel | null = null;
+  private realtimeCleanup: (() => void) | null = null;
+  private isSupabaseSyncing: boolean = false;
+  private isRlsBlocked: boolean = false;
+  private isInitialized: boolean = false;
+
   constructor() {
     this.init();
   }
 
-  private isSupabaseSyncing: boolean = false;
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  public notifyListeners(): void {
+    this.listeners.forEach(fn => {
+      try {
+        fn();
+      } catch (e) {
+        console.error('Store listener error:', e);
+      }
+    });
+  }
+
+  public getIsRlsBlocked(): boolean {
+    return this.isRlsBlocked;
+  }
+
+  public getIsInitialized(): boolean {
+    return this.isInitialized;
+  }
+
+  private setupCrossTabSync(): void {
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        this.crossTabChannel = new BroadcastChannel('atli_cross_tab_sync');
+        this.crossTabChannel.onmessage = (event) => {
+          if (event.data?.type === 'SYNC_DATA') {
+            this.refreshFromSupabase(true);
+          }
+        };
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e) => {
+        if (e.key && e.key.startsWith('abk_system_')) {
+          this.loadFromLocalStorage();
+          this.notifyListeners();
+        }
+      });
+    }
+  }
+
+  public broadcastChange(): void {
+    if (this.crossTabChannel) {
+      try {
+        this.crossTabChannel.postMessage({ type: 'SYNC_DATA', timestamp: Date.now() });
+      } catch (e) {
+        // ignore
+      }
+    }
+  }
+
+  private setupRealtime(): void {
+    if (this.realtimeCleanup) {
+      this.realtimeCleanup();
+      this.realtimeCleanup = null;
+    }
+
+    this.realtimeCleanup = setupSupabaseRealtime((table, _payload) => {
+      console.info(`[Realtime Sync] Perubahan data "${table}" diterima dari Supabase.`);
+      this.refreshFromSupabase(true);
+    });
+  }
+
+  private startSyncTimers(): void {
+    // Polling background setiap 10 detik sebagai proteksi jika koneksi websocket gadget mobile sempat sleep
+    if (typeof window !== 'undefined') {
+      setInterval(() => {
+        this.refreshFromSupabase(true);
+      }, 10000);
+
+      window.addEventListener('focus', () => {
+        this.refreshFromSupabase(true);
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          this.refreshFromSupabase(true);
+        }
+      });
+    }
+  }
+
+  private loadFromLocalStorage(): void {
+    try {
+      const savedCompanies = localStorage.getItem(STORAGE_KEYS.COMPANIES);
+      if (savedCompanies) this.companies = JSON.parse(savedCompanies);
+
+      const savedVessels = localStorage.getItem(STORAGE_KEYS.VESSELS);
+      if (savedVessels) this.vessels = JSON.parse(savedVessels);
+
+      const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
+      if (savedUser) this.currentUser = JSON.parse(savedUser);
+
+      const savedWorkers = localStorage.getItem(STORAGE_KEYS.WORKERS);
+      if (savedWorkers) {
+        const parsedWorkers: Worker[] = JSON.parse(savedWorkers);
+        this.workers = parsedWorkers.filter(w => !w.id.startsWith("w-") || w.id.length > 5);
+      }
+
+      const savedManifests = localStorage.getItem(STORAGE_KEYS.MANIFESTS);
+      if (savedManifests) this.manifests = JSON.parse(savedManifests);
+
+      const savedDiscrepancies = localStorage.getItem(STORAGE_KEYS.DISCREPANCIES);
+      if (savedDiscrepancies) this.discrepancies = JSON.parse(savedDiscrepancies);
+
+      const savedEvents = localStorage.getItem(STORAGE_KEYS.EVENTS);
+      if (savedEvents) this.events = JSON.parse(savedEvents);
+
+      const savedMobility = localStorage.getItem(STORAGE_KEYS.MOBILITY);
+      if (savedMobility) this.mobilityRecords = JSON.parse(savedMobility);
+
+      const savedDuplicates = localStorage.getItem(STORAGE_KEYS.DUPLICATES);
+      if (savedDuplicates) this.duplicateAlerts = JSON.parse(savedDuplicates);
+
+      const savedClearances = localStorage.getItem(STORAGE_KEYS.CLEARANCES);
+      if (savedClearances) this.clearanceRecords = JSON.parse(savedClearances);
+    } catch (e) {
+      console.warn('Error reading from localStorage:', e);
+    }
+  }
 
   private async init() {
-    // 1. Bersihkan seluruh jejak data dummy versi lama dan key usang dari localStorage browser
     try {
       optimizeLocalStorage();
     } catch (e) {
       // ignore
     }
 
-    // 2. Muat data riil dari localStorage (default kosong jika baru pertama kali)
-    const savedCompanies = localStorage.getItem(STORAGE_KEYS.COMPANIES);
-    this.companies = savedCompanies ? JSON.parse(savedCompanies) : [];
+    this.loadFromLocalStorage();
+    this.setupCrossTabSync();
+    this.setupRealtime();
+    this.startSyncTimers();
 
-    const savedVessels = localStorage.getItem(STORAGE_KEYS.VESSELS);
-    this.vessels = savedVessels ? JSON.parse(savedVessels) : [];
+    // Segera ambil data terkini dari Supabase Cloud
+    await this.refreshFromSupabase(false);
+    this.isInitialized = true;
+    this.notifyListeners();
 
-    const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
-    if (savedUser) {
-      this.currentUser = JSON.parse(savedUser);
+    // Upload data lokal yang belum sempat tersinkronisasi ke Supabase
+    this.pushLocalDataToSupabase().catch(err => {
+      console.warn('[Sync] Push local data notice:', err);
+    });
+  }
+
+  /**
+   * Menjamin bahwa seluruh data yang pernah tersimpan lokal di gadget ini (ABK, Armada, Perusahaan)
+   * otomatis di-upload ke Supabase Cloud sehingga gadget lain langsung bisa melihatnya.
+   */
+  public async pushLocalDataToSupabase(): Promise<void> {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      // 1. Sync Companies
+      for (const comp of this.companies) {
+        const res = await dbInsertCompany(comp);
+        if (res.success && res.data?.id && res.data.id !== comp.id) {
+          comp.id = res.data.id;
+        }
+      }
+      this.saveCompanies();
+
+      // 2. Sync Vessels
+      for (const vess of this.vessels) {
+        const res = await dbInsertVessel(vess);
+        if (res.success && res.data?.id && res.data.id !== vess.id) {
+          vess.id = res.data.id;
+        }
+      }
+      this.saveVessels();
+
+      // 3. Sync Workers
+      for (const w of this.workers) {
+        const res = await dbInsertWorker(w);
+        if (res.success && res.data?.id && res.data.id !== w.id) {
+          w.id = res.data.id;
+        }
+      }
+      this.saveWorkers();
+
+      this.notifyListeners();
+    } catch (e) {
+      console.warn('pushLocalDataToSupabase error:', e);
     }
-
-    const savedWorkers = localStorage.getItem(STORAGE_KEYS.WORKERS);
-    if (savedWorkers) {
-      const parsedWorkers: Worker[] = JSON.parse(savedWorkers);
-      // Buang jika ada record dummy lama (w-1 s/d w-12)
-      this.workers = parsedWorkers.filter(w => !w.id.startsWith("w-") || w.id.length > 5);
-    } else {
-      this.workers = [];
-    }
-
-    const savedManifests = localStorage.getItem(STORAGE_KEYS.MANIFESTS);
-    this.manifests = savedManifests ? JSON.parse(savedManifests) : [];
-
-    const savedDiscrepancies = localStorage.getItem(STORAGE_KEYS.DISCREPANCIES);
-    this.discrepancies = savedDiscrepancies ? JSON.parse(savedDiscrepancies) : [];
-
-    const savedEvents = localStorage.getItem(STORAGE_KEYS.EVENTS);
-    this.events = savedEvents ? JSON.parse(savedEvents) : [];
-
-    const savedMobility = localStorage.getItem(STORAGE_KEYS.MOBILITY);
-    this.mobilityRecords = savedMobility ? JSON.parse(savedMobility) : [];
-
-    const savedDuplicates = localStorage.getItem(STORAGE_KEYS.DUPLICATES);
-    this.duplicateAlerts = savedDuplicates ? JSON.parse(savedDuplicates) : [];
-
-    const savedClearances = localStorage.getItem(STORAGE_KEYS.CLEARANCES);
-    this.clearanceRecords = savedClearances ? JSON.parse(savedClearances) : [];
-
-    // 3. Otomatis sinkronisasi data riil dari Supabase jika konfigurasi tersedia
-    this.refreshFromSupabase().catch(err => console.log("Supabase sync notice:", err));
   }
 
   /**
    * Mengambil dan memperbarui data riil langsung dari Cloud Supabase
    */
-  public async refreshFromSupabase(): Promise<{ success: boolean; message: string }> {
+  public async refreshFromSupabase(silent = false): Promise<{ success: boolean; message: string }> {
     if (this.isSupabaseSyncing) return { success: false, message: "Sinkronisasi sedang berlangsung..." };
     this.isSupabaseSyncing = true;
 
     try {
       const res = await fetchAllFromSupabase();
-      if (res.error) {
+      if (res.isRlsBlocked) {
+        this.isRlsBlocked = true;
+      } else {
+        this.isRlsBlocked = false;
+      }
+
+      if (res.error && !res.companies && !res.workers && !res.vessels) {
         this.isSupabaseSyncing = false;
+        if (!silent) this.notifyListeners();
         return { success: false, message: res.error };
       }
 
-      if (res.companies && res.companies.length > 0) {
-        this.companies = res.companies;
-        this.saveCompanies();
+      if (res.companies && Array.isArray(res.companies)) {
+        if (res.companies.length > 0 || this.companies.length === 0) {
+          this.companies = res.companies;
+          this.saveCompanies();
+        }
       }
-      if (res.vessels && res.vessels.length > 0) {
-        this.vessels = res.vessels;
-        this.saveVessels();
+      if (res.vessels && Array.isArray(res.vessels)) {
+        if (res.vessels.length > 0 || this.vessels.length === 0) {
+          this.vessels = res.vessels;
+          this.saveVessels();
+        }
       }
-      if (res.workers && res.workers.length > 0) {
-        this.workers = res.workers;
-        this.saveWorkers();
+      if (res.workers && Array.isArray(res.workers)) {
+        if (res.workers.length > 0 || this.workers.length === 0) {
+          this.workers = res.workers;
+          this.saveWorkers();
+        }
       }
-      if (res.manifests && res.manifests.length > 0) {
-        this.manifests = res.manifests;
-        this.saveManifests();
+      if (res.manifests && Array.isArray(res.manifests)) {
+        if (res.manifests.length > 0 || this.manifests.length === 0) {
+          this.manifests = res.manifests;
+          this.saveManifests();
+        }
       }
-      if (res.alerts && res.alerts.length > 0) {
+      if (res.alerts && Array.isArray(res.alerts)) {
         this.duplicateAlerts = res.alerts;
         this.saveDuplicates();
       }
 
       this.isSupabaseSyncing = false;
+      this.notifyListeners();
+
       return { 
         success: true, 
         message: `Sinkronisasi Supabase berhasil: ${this.workers.length} ABK, ${this.vessels.length} Kapal, ${this.companies.length} Perusahaan.` 
       };
-    } catch (e) {
+    } catch (e: any) {
       this.isSupabaseSyncing = false;
       return { success: false, message: e?.message || "Gagal terhubung ke Supabase" };
     }
@@ -421,7 +591,7 @@ export class DataStore {
     }
 
     const newWorker: Worker = {
-      id: `w-${Date.now()}`,
+      id: generateUUID(),
       name: data.name.trim(),
       nik_hash: hashed,
       nik_last4: last4,
@@ -434,9 +604,17 @@ export class DataStore {
 
     this.workers.unshift(newWorker);
     this.saveWorkers();
+    this.notifyListeners();
+    this.broadcastChange();
 
-    // Simpan otomatis ke Supabase jika terhubung
-    dbInsertWorker(newWorker).catch(err => console.log('Supabase sync worker:', err));
+    // Simpan otomatis ke Supabase Cloud
+    dbInsertWorker(newWorker).then((res) => {
+      if (res.success && res.data?.id && res.data.id !== newWorker.id) {
+        newWorker.id = res.data.id;
+        this.saveWorkers();
+        this.notifyListeners();
+      }
+    }).catch(err => console.warn('Supabase sync worker:', err));
 
     return { success: true, worker: newWorker };
   }
@@ -465,7 +643,7 @@ export class DataStore {
     );
     if (!company) {
       company = {
-        id: `c-${Date.now()}`,
+        id: generateUUID(),
         name: companyName,
         code: companyName.slice(0, 4).toUpperCase(),
         license_number: `SIUP-KKP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -478,11 +656,11 @@ export class DataStore {
       };
       this.companies.push(company);
       this.saveCompanies();
-      dbInsertCompany(company).catch(err => console.log('Supabase sync company:', err));
+      dbInsertCompany(company).catch(err => console.warn('Supabase sync company:', err));
     }
 
     const newVessel: Vessel = {
-      id: `v-${Date.now()}`,
+      id: generateUUID(),
       name: data.name.trim(),
       registration_number: data.registration_number.trim(),
       gross_tonnage: Number(data.gross_tonnage) || 30,
@@ -494,9 +672,11 @@ export class DataStore {
 
     this.vessels.unshift(newVessel);
     this.saveVessels();
+    this.notifyListeners();
+    this.broadcastChange();
 
     // Simpan otomatis ke Supabase jika terhubung
-    dbInsertVessel(newVessel).catch(err => console.log('Supabase sync vessel:', err));
+    dbInsertVessel(newVessel).catch(err => console.warn('Supabase sync vessel:', err));
 
     return { success: true, vessel: newVessel };
   }
@@ -527,7 +707,7 @@ export class DataStore {
       let company = this.companies.find(c => c.name.toLowerCase() === companyName.toLowerCase());
       if (!company) {
         company = {
-          id: `c-${Date.now()}-${idx}`,
+          id: generateUUID(),
           name: companyName,
           code: `CMP-${Math.floor(100 + Math.random() * 900)}`,
           license_number: `SIUP-P/${new Date().getFullYear()}/${100 + this.companies.length}`,
@@ -539,6 +719,7 @@ export class DataStore {
           created_at: new Date().toISOString()
         };
         this.companies.push(company);
+        dbInsertCompany(company).catch(err => console.warn('Supabase sync company:', err));
       }
 
       // Check if registration number already exists
@@ -549,7 +730,7 @@ export class DataStore {
       }
 
       const newVessel: Vessel = {
-        id: `v-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`,
+        id: generateUUID(),
         name: trimmedName,
         registration_number: reg,
         gross_tonnage: Number(item.gross_tonnage) || 30,
@@ -562,11 +743,14 @@ export class DataStore {
 
       this.vessels.unshift(newVessel);
       createdVessels.push(newVessel);
+      dbInsertVessel(newVessel).catch(err => console.warn('Supabase sync vessel:', err));
     });
 
     if (createdVessels.length > 0) {
       this.saveVessels();
       this.saveCompanies();
+      this.notifyListeners();
+      this.broadcastChange();
     }
 
     return {
@@ -761,7 +945,7 @@ export class DataStore {
     });
 
     const newManifest: Manifest = {
-      id: `m-${Date.now()}`,
+      id: generateUUID(),
       manifest_number: manifestNumber,
       vessel_id: vessel.id,
       vessel_name: vessel.name,
@@ -783,13 +967,16 @@ export class DataStore {
     if (vIdx !== -1) {
       this.vessels[vIdx] = { ...this.vessels[vIdx], status: 'di_laut' };
       this.saveVessels();
+      dbInsertVessel(this.vessels[vIdx]).catch(err => console.warn('Supabase sync vessel:', err));
     }
     this.saveWorkers();
     this.saveManifests();
     this.saveEvents();
+    this.notifyListeners();
+    this.broadcastChange();
 
     // Simpan otomatis manifest ke Supabase jika terhubung
-    dbInsertManifest(newManifest).catch(err => console.log('Supabase sync manifest:', err));
+    dbInsertManifest(newManifest).catch(err => console.warn('Supabase sync manifest:', err));
 
     return { success: true, manifest: newManifest };
   }
@@ -1027,7 +1214,7 @@ export class DataStore {
     }
 
     const newManifest: Manifest = {
-      id: `m-${Date.now()}`,
+      id: generateUUID(),
       manifest_number: manifestNumber,
       vessel_id: vessel.id,
       vessel_name: vessel.name,
@@ -1049,6 +1236,7 @@ export class DataStore {
     const vIdx = this.vessels.findIndex(v => v.id === vessel.id);
     if (vIdx !== -1) {
       this.vessels[vIdx] = { ...this.vessels[vIdx], status: 'sandar' };
+      dbInsertVessel(this.vessels[vIdx]).catch(err => console.warn('Supabase sync vessel:', err));
     }
     
     // Update vessel active crew counts
@@ -1064,9 +1252,11 @@ export class DataStore {
     this.saveEvents();
     this.saveMobility();
     this.saveClearances();
+    this.notifyListeners();
+    this.broadcastChange();
 
     // Simpan otomatis manifest kedatangan ke Supabase jika terhubung
-    dbInsertManifest(newManifest).catch(err => console.log('Supabase sync manifest arrival:', err));
+    dbInsertManifest(newManifest).catch(err => console.warn('Supabase sync manifest arrival:', err));
 
     return { 
       success: true, 
@@ -1119,6 +1309,9 @@ export class DataStore {
       clearance_by_name: this.currentUser.name
     };
     this.saveWorkers();
+    this.notifyListeners();
+    this.broadcastChange();
+    dbInsertWorker(this.workers[wIdx]).catch(err => console.warn('Supabase sync worker clearance:', err));
 
     // Update active clearance record if found
     const clrIdx = this.clearanceRecords.findIndex(c => c.worker_id === workerId && c.status === 'ada_tanggungan');
@@ -1148,6 +1341,8 @@ export class DataStore {
         notes: notes ? `${this.discrepancies[idx].notes} | Catatan Admin: ${notes}` : this.discrepancies[idx].notes
       };
       this.saveDiscrepancies();
+      this.notifyListeners();
+      this.broadcastChange();
     }
   }
 
@@ -1291,6 +1486,8 @@ export class DataStore {
       resolution_notes: resolutionNotes
     };
     this.saveDuplicates();
+    this.notifyListeners();
+    this.broadcastChange();
 
     return { success: true };
   }
@@ -1411,6 +1608,10 @@ export class DataStore {
       return alert;
     });
     this.saveDuplicates();
+    this.notifyListeners();
+    this.broadcastChange();
+
+    dbInsertWorker(this.workers[wIdx]).catch(err => console.warn('Supabase sync worker update:', err));
 
     return { success: true, worker: this.workers[wIdx], record: mobilityRecord };
   }
@@ -1451,6 +1652,10 @@ export class DataStore {
       ...attributes
     };
     this.saveWorkers();
+    this.notifyListeners();
+    this.broadcastChange();
+
+    dbInsertWorker(this.workers[idx]).catch(err => console.warn('Supabase sync worker update:', err));
 
     return { success: true, worker: this.workers[idx] };
   }
@@ -1485,8 +1690,8 @@ export class DataStore {
     // If transferring from another vessel, log mobility audit
     if (worker.last_vessel_id && worker.last_vessel_id !== vesselId) {
       const fromVessel = this.vessels.find(v => v.id === worker.last_vessel_id);
-      this.mobilityRecords.unshift({
-        id: `mob-${Date.now()}`,
+      const mobRecord: WorkerMobilityRecord = {
+        id: generateUUID(),
         worker_id: worker.id,
         worker_name: worker.name,
         worker_nik_last4: worker.nik_last4,
@@ -1503,8 +1708,10 @@ export class DataStore {
         notes: `Penugasan pindah armada ke kapal ${vessel.name}`,
         clearance_status: 'disetujui',
         recorded_by_name: this.currentUser.name
-      });
+      };
+      this.mobilityRecords.unshift(mobRecord);
       this.saveMobility();
+      dbInsertMobility(mobRecord).catch(err => console.warn('Supabase sync mobility:', err));
     }
 
     this.workers[wIdx] = {
@@ -1523,6 +1730,11 @@ export class DataStore {
       active_crew_count: this.workers.filter(w => w.last_vessel_id === v.id).length
     }));
     this.saveVessels();
+    this.notifyListeners();
+    this.broadcastChange();
+
+    dbInsertWorker(this.workers[wIdx]).catch(err => console.warn('Supabase sync worker:', err));
+    dbInsertVessel(vessel).catch(err => console.warn('Supabase sync vessel:', err));
 
     return { success: true, worker: this.workers[wIdx] };
   }
@@ -1556,8 +1768,8 @@ export class DataStore {
     const vesselName = fromVessel?.name || worker.last_vessel_name;
     const companyName = fromVessel?.company_name || worker.company_name || worker.pkl_company_name;
 
-    this.mobilityRecords.unshift({
-      id: `mob-${Date.now()}`,
+    const mobRecord: WorkerMobilityRecord = {
+      id: generateUUID(),
       worker_id: worker.id,
       worker_name: worker.name,
       worker_nik_last4: worker.nik_last4,
@@ -1574,8 +1786,10 @@ export class DataStore {
       notes: notes || `Resmi dilepas dari hubungan kerja kapal ${vesselName || '-'} dan perusahaan ${companyName || '-'}. Status pekerja kembali bebas tugas di darat.`,
       clearance_status: 'disetujui',
       recorded_by_name: this.currentUser.name
-    });
+    };
+    this.mobilityRecords.unshift(mobRecord);
     this.saveMobility();
+    dbInsertMobility(mobRecord).catch(err => console.warn('Supabase sync mobility:', err));
 
     this.workers[wIdx] = {
       ...worker,
@@ -1599,6 +1813,10 @@ export class DataStore {
       active_crew_count: this.workers.filter(w => w.last_vessel_id === v.id).length
     }));
     this.saveVessels();
+    this.notifyListeners();
+    this.broadcastChange();
+
+    dbInsertWorker(this.workers[wIdx]).catch(err => console.warn('Supabase sync worker:', err));
 
     return { success: true, worker: this.workers[wIdx] };
   }
@@ -1643,7 +1861,7 @@ export class DataStore {
     }
 
     const newCompany: Company = {
-      id: `c-${Date.now()}`,
+      id: generateUUID(),
       name: trimmedName,
       code: cleanCode,
       license_number: data.license_number?.trim() || `SIUP-KKP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -1657,14 +1875,23 @@ export class DataStore {
 
     this.companies.push(newCompany);
     this.saveCompanies();
-    dbInsertCompany(newCompany).catch(err => console.log('Supabase sync company:', err));
+    this.notifyListeners();
+    this.broadcastChange();
+
+    dbInsertCompany(newCompany).then(res => {
+      if (res.success && res.data?.id && res.data.id !== newCompany.id) {
+        newCompany.id = res.data.id;
+        this.saveCompanies();
+        this.notifyListeners();
+      }
+    }).catch(err => console.warn('Supabase sync company:', err));
 
     let createdVessel: Vessel | undefined;
 
     // Optional initial vessel registration
     if (data.initialVessel && data.initialVessel.name && data.initialVessel.name.trim()) {
       createdVessel = {
-        id: `v-${Date.now()}`,
+        id: generateUUID(),
         name: data.initialVessel.name.trim(),
         registration_number: data.initialVessel.registration_number?.trim() || `SIPI.${Math.floor(100 + Math.random() * 900)}/KKP/${new Date().getFullYear()}`,
         gross_tonnage: Number(data.initialVessel.gross_tonnage) || 30,
@@ -1677,7 +1904,9 @@ export class DataStore {
       };
       this.vessels.push(createdVessel);
       this.saveVessels();
-      dbInsertVessel(createdVessel).catch(err => console.log('Supabase sync vessel:', err));
+      this.notifyListeners();
+      this.broadcastChange();
+      dbInsertVessel(createdVessel).catch(err => console.warn('Supabase sync vessel:', err));
     }
 
     return { 
@@ -1709,7 +1938,7 @@ export class DataStore {
     }
 
     const newVessel: Vessel = {
-      id: `v-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: generateUUID(),
       name: trimmedName,
       registration_number: data.registration_number?.trim() || `SIPI.${Math.floor(100 + Math.random() * 900)}/KKP/${new Date().getFullYear()}`,
       gross_tonnage: Number(data.gross_tonnage) || 30,
@@ -1723,7 +1952,10 @@ export class DataStore {
 
     this.vessels.push(newVessel);
     this.saveVessels();
-    dbInsertVessel(newVessel).catch(err => console.log('Supabase sync vessel:', err));
+    this.notifyListeners();
+    this.broadcastChange();
+
+    dbInsertVessel(newVessel).catch(err => console.warn('Supabase sync vessel:', err));
     return { success: true, vessel: newVessel };
   }
 
@@ -1767,7 +1999,7 @@ export class DataStore {
       }
 
       const newVessel: Vessel = {
-        id: `v-${Date.now()}-${counter}-${Math.floor(Math.random() * 1000)}`,
+        id: generateUUID(),
         name: trimmedName,
         registration_number: item.registration_number?.trim() || `SIPI.${Math.floor(100 + Math.random() * 900)}/KKP/${new Date().getFullYear()}`,
         gross_tonnage: Number(item.gross_tonnage) || 30,
@@ -1781,10 +2013,13 @@ export class DataStore {
 
       this.vessels.push(newVessel);
       addedVessels.push(newVessel);
+      dbInsertVessel(newVessel).catch(err => console.warn('Supabase sync vessel:', err));
     }
 
     if (addedVessels.length > 0) {
       this.saveVessels();
+      this.notifyListeners();
+      this.broadcastChange();
     }
 
     return {
@@ -1796,3 +2031,16 @@ export class DataStore {
 }
 
 export const store = new DataStore();
+
+/**
+ * React hook to subscribe component to store updates across devices and tabs
+ */
+export function useStoreVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    return store.subscribe(() => {
+      setVersion(v => v + 1);
+    });
+  }, []);
+  return version;
+}

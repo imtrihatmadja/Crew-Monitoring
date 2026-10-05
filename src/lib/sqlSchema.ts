@@ -314,12 +314,19 @@ ALTER TABLE IF EXISTS checkin_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_mobility_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS crew_duplication_alerts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_complaints DISABLE ROW LEVEL SECURITY;
+
+-- AKTIFKAN SUPABASE REALTIME BROADCAST (SUPAYA DATA MUNCUL REALTIME DI SEMUA GADGET)
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE companies, vessels, workers, manifests, crew_duplication_alerts, worker_mobility_records;
+EXCEPTION
+  WHEN others THEN null;
+END $$;
 `;
 
 export const SQL_SCHEMA_TEXT = SUPABASE_SQL_SCHEMA;
 
 export const SQL_RLS_FIX = `-- ==============================================================================
--- 1-KLIK PERBAIKAN IZIN AKSES SUPABASE (FIX RLS 42501)
+-- 1-KLIK PERBAIKAN IZIN AKSES & REALTIME SUPABASE (FIX RLS 42501 & SYNC MULTI-DEVICE)
 -- Salin dan jalankan seluruh baris di bawah ini di SQL Editor dashboard Supabase:
 -- https://supabase.com/dashboard/project/dzfozeuccisjfwmpbews/sql/new
 -- ==============================================================================
@@ -337,6 +344,13 @@ ALTER TABLE IF EXISTS checkin_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_mobility_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS crew_duplication_alerts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS worker_complaints DISABLE ROW LEVEL SECURITY;
+
+-- Aktifkan Realtime Broadcast di seluruh gadget
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE companies, vessels, workers, manifests, crew_duplication_alerts, worker_mobility_records;
+EXCEPTION
+  WHEN others THEN null;
+END $$;
 `;
 
 export const SCHEMA_DIAGRAM = `

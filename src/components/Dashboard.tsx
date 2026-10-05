@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProfile, NavTab, Worker, Company } from '../types';
 import { store } from '../lib/supabaseStore';
 import { 
@@ -41,6 +41,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenSqlModal,
   onOpenWorkerDetail
 }) => {
+  const [, setStoreTick] = useState(0);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      setStoreTick(t => t + 1);
+    });
+  }, []);
+
   const metrics = store.getMetrics();
   const workers = store.getWorkers();
   const vessels = store.getVessels();

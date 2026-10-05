@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { store } from '../lib/supabaseStore';
 import { Company, Vessel, UserProfile } from '../types';
 import { 
@@ -32,6 +32,20 @@ export const AssociationDirectory: React.FC<AssociationDirectoryProps> = ({
   const [companies, setCompanies] = useState<Company[]>(() => store.getCompanies());
   const [vessels, setVessels] = useState<Vessel[]>(() => store.getVessels());
   const workers = store.getWorkers();
+
+  // Subscribe to real-time store updates across all devices
+  useEffect(() => {
+    return store.subscribe(() => {
+      const updatedComps = store.getCompanies();
+      const updatedVessels = store.getVessels();
+      setCompanies(updatedComps);
+      setVessels(updatedVessels);
+      setSelectedCompanyId(prev => {
+        if (!prev && updatedComps.length > 0) return updatedComps[0].id;
+        return prev;
+      });
+    });
+  }, []);
 
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(companies[0]?.id || '');
   const [searchTerm, setSearchTerm] = useState<string>('');

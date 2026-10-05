@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { store } from '../lib/supabaseStore';
 import { ManifestType, Worker, Vessel } from '../types';
 import {
@@ -30,6 +30,20 @@ export const ManifestLog: React.FC = () => {
   const currentUser = store.getCurrentUser();
   const [vessels, setVessels] = useState(() => store.getVessels());
   const [allWorkers, setAllWorkers] = useState(() => store.getWorkers());
+
+  // Subscribe to real-time store updates across all devices
+  useEffect(() => {
+    return store.subscribe(() => {
+      const updatedVessels = store.getVessels();
+      const updatedWorkers = store.getWorkers();
+      setVessels(updatedVessels);
+      setAllWorkers(updatedWorkers);
+      setSelectedVesselId(prev => {
+        if (!prev && updatedVessels.length > 0) return updatedVessels[0].id;
+        return prev;
+      });
+    });
+  }, []);
 
   // Form State
   const [manifestType, setManifestType] = useState<ManifestType>('keberangkatan');

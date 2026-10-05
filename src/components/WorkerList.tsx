@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Worker, UserProfile, Company, Vessel } from '../types';
 import { store } from '../lib/supabaseStore';
 import { WorkerDetailModal } from './WorkerDetailModal';
@@ -38,6 +38,13 @@ export const WorkerList: React.FC<WorkerListProps> = ({
   const [highMobilityOnly, setHighMobilityOnly] = useState<boolean>(false);
   const [selectedWorkerForDetail, setSelectedWorkerForDetail] = useState<Worker | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Subscribe to real-time store updates across all devices & tabs
+  useEffect(() => {
+    return store.subscribe(() => {
+      setRefreshTrigger(prev => prev + 1);
+    });
+  }, []);
 
   const companies: Company[] = store.getCompanies();
 

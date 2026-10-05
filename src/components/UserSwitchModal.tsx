@@ -57,7 +57,8 @@ export const UserSwitchModal: React.FC<UserSwitchModalProps> = ({
     setIsSyncing(true);
     setSyncResult(null);
     try {
-      const res = await store.refreshFromSupabase();
+      await store.pushLocalDataToSupabase();
+      const res = await store.refreshFromSupabase(false);
       setSyncResult(res);
       const testRes = await testSupabaseConnection();
       setConnStatus({

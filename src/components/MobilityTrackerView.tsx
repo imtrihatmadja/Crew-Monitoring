@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { store } from '../lib/supabaseStore';
 import { WorkerMobilityRecord, Worker, Vessel, Company, UserProfile } from '../types';
 import { 
@@ -29,9 +29,19 @@ export const MobilityTrackerView: React.FC<MobilityTrackerViewProps> = ({
   onNavigateToWorkerDetail
 }) => {
   const [records, setRecords] = useState<WorkerMobilityRecord[]>(store.getMobilityRecords());
-  const [workers] = useState<Worker[]>(store.getWorkers());
-  const [vessels] = useState<Vessel[]>(store.getVessels());
-  const [companies] = useState<Company[]>(store.getCompanies());
+  const [workers, setWorkers] = useState<Worker[]>(store.getWorkers());
+  const [vessels, setVessels] = useState<Vessel[]>(store.getVessels());
+  const [companies, setCompanies] = useState<Company[]>(store.getCompanies());
+
+  // Subscribe to real-time store updates across all devices
+  useEffect(() => {
+    return store.subscribe(() => {
+      setRecords(store.getMobilityRecords());
+      setWorkers(store.getWorkers());
+      setVessels(store.getVessels());
+      setCompanies(store.getCompanies());
+    });
+  }, []);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterHighMobilityOnly, setFilterHighMobilityOnly] = useState(false);
